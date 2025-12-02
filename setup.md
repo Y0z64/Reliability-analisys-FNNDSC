@@ -18,3 +18,19 @@ micromamba activate -p /neuro/labs/grantlab/research/MRI_processing/environment
 run_SP_predicton.py --subjects [subject.csv]
 ```
 
+# How to run
+
+**Single subject:**
+- Simply change the parameters in cell 2 of the notebook and run all cells.
+
+**Multiple subjects:**
+- Make sure to be in `/neuro/users/yair,beltran/Reliability`
+- Select correct subject.csv file in `batch_process.py`
+- Run the following command:
+```bash
+python batch_process.py
+```
+**Note:** Apart from the pdf reports and the .csv cache this will generate a copy of the notebook for each subject in the `outputs` folder.
+
+
+

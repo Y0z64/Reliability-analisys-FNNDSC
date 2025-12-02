@@ -1,10 +1,10 @@
 #!. /neuro/users/mri.team/packages/env_MRI_team
 
-#=============================================================
+# =============================================================
 # Title: Subplate Surface extraction over a batch of subjects
-# Author: Andrea Gondova 
+# Author: Andrea Gondova
 # Contact: andrea.gondova@childrens.harvard.edu
-#=============================================================
+# =============================================================
 
 import pandas as pd
 import os
@@ -15,35 +15,37 @@ import subprocess
 subjects_base_path = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
 
 def process_split(split_data):
-  """Process a single split - to be run in parallel"""
-  subject_id, session_id, split, args = split_data
-  
-  print(f"▶ Starting: {subject_id}_{session_id}_{split}", flush=True)
-  
-  subject_path = os.path.join(subjects_base_path, subject_id, session_id)
-  segm_dir = os.path.join(subject_path, split, 'anat/segmentations')
-  path2segm = os.path.join(segm_dir, f'{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii')
-  
-  if not os.path.exists(path2segm):
-    return {
-      'subject_id': subject_id,
-      'session_id': session_id,
-      'split': split,
-      'reason': 'Data not found'
-    }
-  
-  outdir = os.path.join(subject_path, split, "default_surfaces")
-  os.makedirs(outdir, exist_ok=True)
-  
-  if args.force_rerun:
-    os.system(f"rm -rf {outdir}/*")
-  
-  # Log file for this specific split
-  split_dir = os.path.join(subject_path, split)
-  error_log = os.path.join(split_dir, f"{subject_id}_{session_id}_{split}_error.log")
-  
-  # Run extraction pipeline, redirect all output to error log
-  cmd = [
+    """Process a single split - to be run in parallel"""
+    subject_id, session_id, split, args = split_data
+
+    print(f"▶ Starting: {subject_id}_{session_id}_{split}", flush=True)
+
+    subject_path = os.path.join(subjects_base_path, subject_id, session_id)
+    segm_dir = os.path.join(subject_path, split, "recon_segmentation")
+    path2segm = os.path.join(
+        segm_dir, f"{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii"
+    )
+
+    if not os.path.exists(path2segm):
+        return {
+            "subject_id": subject_id,
+            "session_id": session_id,
+            "split": split,
+            "reason": "Data not found",
+        }
+
+    outdir = os.path.join(subject_path, split, "default_surfaces")
+    os.makedirs(outdir, exist_ok=True)
+
+    if args.force_rerun:
+        os.system(f"rm -rf {outdir}/*")
+
+    # Log file for this specific split
+    split_dir = os.path.join(subject_path, split)
+    error_log = os.path.join(split_dir, f"{subject_id}_{session_id}_{split}_error.log")
+
+    # Run extraction pipeline, redirect all output to error log
+    cmd = [
     'python3', '/neuro/users/yair.beltran/Reliability/extract_SP_surface.py',
     '--subject_id', subject_id,
     '--session_id', session_id,
@@ -56,25 +58,25 @@ def process_split(split_data):
     '--log', 'no',  # Disable SP_log.txt
     '--smooth_WM', args.smooth_WM
   ]
-  
-  with open(error_log, 'w') as log_file:
-    result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT)
-  
-  if result.returncode != 0:
-    # Read last 500 chars of error log to show what failed
-    with open(error_log, 'r') as f:
-      error_content = f.read()
-      error_snippet = error_content[-500:] if len(error_content) > 500 else error_content
-    
-    return {
+
+    with open(error_log, 'w') as log_file:
+        result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+
+    if result.returncode != 0:
+        # Read last 500 chars of error log to show what failed
+        with open(error_log, 'r') as f:
+            error_content = f.read()
+            error_snippet = error_content[-500:] if len(error_content) > 500 else error_content
+
+        return {
       'subject_id': subject_id,
       'session_id': session_id,
       'split': split,
       'reason': f'See log: {error_log}',
       'error_snippet': error_snippet
     }
-  
-  return None
+
+    return None
 
 
 if __name__ == '__main__':
@@ -126,4 +128,3 @@ if __name__ == '__main__':
     print(f"\n{len(failed_subjects)} jobs failed. Details in failed.csv")
   else:
     print("\nAll jobs completed successfully!")
-

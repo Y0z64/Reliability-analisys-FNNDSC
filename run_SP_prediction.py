@@ -49,15 +49,15 @@ if __name__ == '__main__':
       subject_path = os.path.join(str(row.subject_id), str(row.session_id))
       for split in Path(os.path.join(iDIR, subject_path)).iterdir():
         split_path = os.path.join(subject_path, split.name)
-        iRECON = os.path.join(iDIR, split_path, "recon_segmentation", "recon_to31init_nuc.nii")
+        iRECON = os.path.join(iDIR, split_path, "recon_segmentation", "recon_to31_nuc.nii")
         
         if not os.path.exists(iRECON):
           raise FileNotFoundError(f"Input not found: {iRECON}")
         
-        oDIR = os.path.join(iDIR, split_path, 'anat/segmentations')
+        oDIR = os.path.join(iDIR, split_path, 'recon_segmentation')
         os.system(f'mkdir -p {oDIR}')
         
-        tmpRECON = os.path.join(oDIR, "recon_to31init_nuc_deep_agg.nii.gz")
+        tmpRECON = os.path.join(oDIR, "recon_to31_nuc_deep_agg.nii.gz")
         oRECON = os.path.join(oDIR, f"{row.subject_id}_{row.session_id}_nuc_deep_subplate_dilate_mc.nii")
         
         cmd = f'python3 {script} -input {iRECON} -output {oDIR} -weights {weights} -gpu 0'
