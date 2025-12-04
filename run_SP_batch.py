@@ -21,10 +21,8 @@ def process_split(split_data):
     print(f"▶ Starting: {subject_id}_{session_id}_{split}", flush=True)
 
     subject_path = os.path.join(subjects_base_path, subject_id, session_id)
-    segm_dir = os.path.join(subject_path, split, "recon_segmentation")
-    path2segm = os.path.join(
-        segm_dir, f"{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii"
-    )
+    segm_dir = os.path.join(subject_path, split, "segmentations")
+    path2segm = os.path.join(segm_dir, f"{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii")
 
     if not os.path.exists(path2segm):
         return {
@@ -46,18 +44,29 @@ def process_split(split_data):
 
     # Run extraction pipeline, redirect all output to error log
     cmd = [
-    'python3', '/neuro/users/yair.beltran/Reliability/extract_SP_surface.py',
-    '--subject_id', subject_id,
-    '--session_id', session_id,
-    '--path2segm', path2segm,
-    '--outdir', outdir,
-    '--estimate_cp', 'yes',
-    '--path2cp_d', outdir,
-    '--convert', args.convert,
-    '--clean_up', args.clean_up,
-    '--log', 'no',  # Disable SP_log.txt
-    '--smooth_WM', args.smooth_WM
-  ]
+        "python3",
+        "/neuro/labs/grantlab/research/MRI_processing/yair.beltran/Reliability/extract_SP_surface.py",
+        "--subject_id",
+        subject_id,
+        "--session_id",
+        session_id,
+        "--path2segm",
+        path2segm,
+        "--outdir",
+        outdir,
+        "--estimate_cp",
+        "yes",
+        "--path2cp_d",
+        outdir,
+        "--convert",
+        args.convert,
+        "--clean_up",
+        args.clean_up,
+        "--log",
+        "no",  # Disable SP_log.txt
+        "--smooth_WM",
+        args.smooth_WM,
+    ]
 
     with open(error_log, 'w') as log_file:
         result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT)
