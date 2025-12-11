@@ -1,46 +1,8 @@
-subject_id,session_id,split,reason,error_snippet
-FCB168,2020.03.12-021Y-MR_EI_Fetal_Neuro-30926,S1,See log: /neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/FCB168/2020.03.12-021Y-MR_EI_Fetal_Neuro-30926/S1/FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_S1_error.log,"/innersp_surface/rh.innersp.obj.log
-2025-12-03 01:55:23.194 | INFO     | gifit.__main__:run_surface_fit:116 - Finished: tmp/_inputs_for_innersp_surface/lh.wm._81920.obj -> tmp/innersp_surface/lh.innersp.obj
-
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-FATAL ERROR: Step 8: Fit inner SP surface failed with exit code 1
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-Cleaning up temp directory: /tmp/sp_pipeline_FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_9zzzsm6v
-"
-FCB168,2020.03.12-021Y-MR_EI_Fetal_Neuro-30926,S2,See log: /neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/FCB168/2020.03.12-021Y-MR_EI_Fetal_Neuro-30926/S2/FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_S2_error.log,"/innersp_surface/lh.innersp.obj.log
-2025-12-03 01:55:28.179 | INFO     | gifit.__main__:run_surface_fit:116 - Finished: tmp/_inputs_for_innersp_surface/rh.wm._81920.obj -> tmp/innersp_surface/rh.innersp.obj
-
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-FATAL ERROR: Step 8: Fit inner SP surface failed with exit code 1
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-Cleaning up temp directory: /tmp/sp_pipeline_FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_z30hb_j9
-"
-FCB168,2020.03.12-021Y-MR_EI_Fetal_Neuro-30926,S3,See log: /neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/FCB168/2020.03.12-021Y-MR_EI_Fetal_Neuro-30926/S3/FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_S3_error.log,"/innersp_surface/rh.innersp.obj.log
-2025-12-03 01:55:33.462 | INFO     | gifit.__main__:run_surface_fit:116 - Finished: tmp/_inputs_for_innersp_surface/lh.wm._81920.obj -> tmp/innersp_surface/lh.innersp.obj
-
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-FATAL ERROR: Step 8: Fit inner SP surface failed with exit code 1
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-Cleaning up temp directory: /tmp/sp_pipeline_FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_ddb30hdm
-"
-FCB168,2020.03.12-021Y-MR_EI_Fetal_Neuro-30926,S4,See log: /neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/FCB168/2020.03.12-021Y-MR_EI_Fetal_Neuro-30926/S4/FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_S4_error.log,"ished: tmp/_inputs_for_innersp_surface/rh.wm._81920.obj -> tmp/innersp_surface/rh.innersp.obj
-INFO:    Terminating squashfuse_ll after timeout
-INFO:    Timeouts can be caused by a running background process
-
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-FATAL ERROR: Step 8: Fit inner SP surface failed with exit code 1
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-Cleaning up temp directory: /tmp/sp_pipeline_FCB168_2020.03.12-021Y-MR_EI_Fetal_Neuro-30926_knmribj9
-"
+subject_id,session_id,error
+5276511,MR-EI_Fetal_Neuro-25451537-20190313,Prediction failed
+FCB092,2016.09.21-036Y-MR_EI_Fetal_Neuro-12778,Prediction failed
+FCB144,2019.05.17-032Y-MR_EI_Fetal_Neuro-29203,Prediction failed
+FCB162,2019.11.19-033Y-MR_EI_Fetal_Neuro-30919,Prediction failed
+FCB100,2017.03.20-029Y-MR_EI_Fetal_Neuro-17917,Prediction failed
+1109332,MR-EI_Fetal_Neuro-26857622-20230531,Prediction failed
+FCB150,2019.09.09-037Y-MR_EI_Fetal_Neuro-29208,Prediction failed
