@@ -51,6 +51,8 @@ def compute_snr(t2_data, mask_data, tissue_label):
     --------
     snr : float
         Signal-to-noise ratio
+        
+        #  Add support for multiple labels
     """
     if isinstance(tissue_label, int):
         tissue_label = [tissue_label]
