@@ -11,14 +11,13 @@
 # 
 # 
 
-# In[3]:
+# In[ ]:
 
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-import seaborn as sns
 
 # Load data
 reliability_df = pd.read_csv("../data/cross_split_metrics.csv")
@@ -34,7 +33,7 @@ print(f"Infodump data: {len(infodump_df)} subjects")
 print(f"\nModels in reliability data: {reliability_df['model'].unique().tolist()}")
 
 
-# In[4]:
+# In[2]:
 
 
 def plot_dice_by_model(df):
@@ -102,7 +101,7 @@ fig = plot_dice_by_model(reliability_df)
 plt.show()
 
 
-# In[5]:
+# In[3]:
 
 
 def plot_relative_diff_by_model(df):
@@ -140,7 +139,7 @@ fig = plot_relative_diff_by_model(reliability_df)
 plt.show()
 
 
-# In[6]:
+# In[4]:
 
 
 def plot_voxel_counts_by_split(quality_df):
@@ -249,7 +248,7 @@ fig = plot_voxel_counts_by_split(quality_df)
 plt.show()
 
 
-# In[8]:
+# In[5]:
 
 
 # === CELL 5b: Subplate Voxel Count - Independent Split Pairs ===
@@ -461,7 +460,7 @@ fig = plot_subplate_split_pairs(quality_df)
 plt.show()
 
 
-# In[9]:
+# In[6]:
 
 
 def plot_per_subject_voxel_counts(quality_df, tissue="sp"):
@@ -528,7 +527,7 @@ fig = plot_per_subject_voxel_counts(quality_df, tissue="cp")
 plt.show()
 
 
-# In[10]:
+# In[7]:
 
 
 def plot_snr_by_split(quality_df):
@@ -600,7 +599,7 @@ fig = plot_snr_by_split(quality_df)
 plt.show()
 
 
-# In[11]:
+# In[8]:
 
 
 def plot_snr_reliability_correlation(quality_df, reliability_df):
@@ -711,7 +710,7 @@ if fig:
     plt.show()
 
 
-# In[23]:
+# In[9]:
 
 
 # === CELL 9: Correlation Matrix Heatmaps (S1-S2 and S3-S4) ===
@@ -895,7 +894,7 @@ fig = plot_correlation_matrices(quality_df, infodump_df)
 plt.show()
 
 
-# In[24]:
+# In[10]:
 
 
 def statistical_model_comparison(df):
@@ -939,7 +938,7 @@ def statistical_model_comparison(df):
 statistical_model_comparison(reliability_df)
 
 
-# In[25]:
+# In[11]:
 
 
 def print_final_summary(reliability_df, quality_df, infodump_df):

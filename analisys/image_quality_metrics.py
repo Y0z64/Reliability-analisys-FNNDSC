@@ -134,6 +134,23 @@ def compute_cnr(
 
     return np.abs(mean_a - mean_b) / noise_std
 
+## Compute native volume
+def compute_scaling_factor(xfm_inv_path):
+    try:
+        A = np.loadtxt(xfm_inv_path)
+        scaling_factor = abs(np.linalg.det(A[:3, :3]))
+        return scaling_factor
+    except Exception as e:
+        print(f"Error loading transformation matrix {xfm_inv_path}: {e}")
+        return None
+
+def compute_native_volume(voxel_count, scaling_factor, voxel_size=0.5): # <- Voxel size will not change unless image is preprocessed differently
+    if scaling_factor is None or voxel_count is None:
+        return None
+
+    voxel_volume = voxel_size ** 3  # 0.125 mm³
+    return voxel_count * voxel_volume * scaling_factor
+
 
 def compute_tissue_stats(t2_data, mask_data, labels):
     """
@@ -173,7 +190,7 @@ def compute_tissue_stats(t2_data, mask_data, labels):
 
 
 def compute_subject_quality_metrics(
-    t2_path, seg_path, subject_id, session_id, split="S1"
+    t2_path, seg_path, subject_id, session_id, xfm_inv_path, split="S1"
 ):
     """
     Compute all image quality metrics for a single subject/split.
@@ -190,6 +207,8 @@ def compute_subject_quality_metrics(
         Session identifier
     split : str
         Split identifier (default 'S1')
+    xfm_inv_path: str
+        Path to inverse scaling .xfm file
 
     Returns:
     --------
@@ -223,6 +242,18 @@ def compute_subject_quality_metrics(
     stats_cp = compute_tissue_stats(t2_data, seg_data, CP_LABELS)
     stats_inner = compute_tissue_stats(t2_data, seg_data, INNER_LABELS)
 
+    # Native volume
+    if xfm_inv_path is not None:
+        scaling_factor = compute_scaling_factor(xfm_inv_path)
+        native_vol_sp = compute_native_volume(stats_sp["volume_voxels"], scaling_factor)
+        native_vol_cp = compute_native_volume(stats_cp["volume_voxels"], scaling_factor)
+        native_vol_inner = compute_native_volume(stats_inner["volume_voxels"], scaling_factor)
+    else:
+        scaling_factor = None
+        native_vol_sp = None
+        native_vol_cp = None
+        native_vol_inner = None
+
     return {
         "subject_id": subject_id,
         "session_id": session_id,
@@ -247,6 +278,11 @@ def compute_subject_quality_metrics(
         "inner_mean_intensity": stats_inner["mean"],
         "inner_std_intensity": stats_inner["std"],
         "inner_volume_voxels": stats_inner["volume_voxels"],
+        # Scaling and native volumes
+        "scaling_factor": scaling_factor,
+        "native_vol_sp": native_vol_sp,
+        "native_vol_cp": native_vol_cp,
+        "native_vol_inner": native_vol_inner,
     }
 
 
@@ -574,6 +610,25 @@ def print_quality_summary(quality_df):
         )
 
     print("\n" + "=" * 60)
+
+
+def print_volume_summary(subject_id, split_to_use, quality_metrics):
+    # Print native volume results
+    print("\n" + "=" * 60)
+    print("RAW VOLUME VS NATIVE VOLUME COMPARISION")
+    print("=" * 60)
+
+    print(f"\nNative volume comparision {subject_id} ({split_to_use}):")
+    print(f"  Scaling factor:        {quality_metrics['scaling_factor']:.2f}")
+    print(
+        f"  Sp voxel count vs native volume:        {quality_metrics['sp_volume_voxels']:.2f} -> {quality_metrics['native_vol_sp']:.2f}"
+    )
+    print(
+        f"  CP voxel count vs native volume:        {quality_metrics['cp_volume_voxels']:.2f} -> {quality_metrics['native_vol_cp']:.2f}"
+    )
+    print(
+        f"  Inner voxel count vs native volume:        {quality_metrics['inner_volume_voxels']:.2f} -> {quality_metrics['native_vol_inner']:.2f}"
+    )
 
 
 # ============================================================

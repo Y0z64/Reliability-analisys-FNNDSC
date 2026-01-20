@@ -18,6 +18,10 @@ micromamba activate -p /neuro/labs/grantlab/research/MRI_processing/environment
 run_SP_predicton.py --subjects [subject.csv]
 ```
 
+## Examples subject
+"/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/FCB145/2019.03.20-032Y-MR_EI_Fetal_Neuro-29197"
+
+
 # How to run
 
 **Single subject:**

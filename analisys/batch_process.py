@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Configuration
 NOTEBOOK_PATH = "Reliability.ipynb"
-CSV_PATH = "subject.csv"
+CSV_PATH = "../data/subject.csv"
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
