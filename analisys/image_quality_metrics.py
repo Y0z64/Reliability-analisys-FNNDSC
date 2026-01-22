@@ -1,262 +1,345 @@
 #!/usr/bin/env python3
 """
 Image Quality Metrics for Fetal Brain Segmentation Reliability Analysis
+========================================================================
 
-This module computes SNR and CNR from T2 images using segmentation masks,
-and correlates these with segmentation reliability metrics.
+Consolidated module combining functionality from:
+- image_quality_metrics.py (core SNR/CNR computation)
+- image_qam_v2.py (multi-split processing)
+- regenerate_iqm.py (batch runner)
+
+Data Format: Long format (one row per subject-split combination)
+- This follows tidy data principles and works well with pandas operations
+- Derived metrics (split differences, means across splits) computed at analysis time
 
 Usage:
-    # In your Reliability.py notebook, add:
-    from image_quality_metrics import compute_image_quality_metrics, plot_quality_vs_reliability
+------
+    # Batch process all subjects
+    python image_quality_metrics_consolidated.py --subjects subject.csv --base_path /path/to/data
+    
+    # Or import as module
+    from image_quality_metrics_consolidated import (
+        compute_subject_split_metrics,
+        batch_compute_metrics,
+        add_derived_metrics,
+    )
 
-    # Compute metrics for all subjects
-    quality_df = compute_image_quality_metrics(subjects_df, base_path)
-
-    # Plot correlation with reliability
-    plot_quality_vs_reliability(quality_df, reliability_df)
+Author: Daniel (consolidated from multiple files)
 """
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from scipy import stats
 import os
+import argparse
+from typing import Dict, List, Optional, Union
 
 
-# ============================================================
-# Core SNR/CNR Functions
-# ============================================================
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Tissue label definitions (SP model)
+TISSUE_LABELS = {
+    "sp": [4, 5],        # Left/Right Subplate
+    "cp": [1, 42],       # Left/Right Cortical Plate  
+    "inner": [160, 161], # Left/Right Inner region
+}
+
+# Default voxel size in mm (template space)
+VOXEL_SIZE_MM = 0.5
+
+# Splits to process
+SPLITS = ["S1", "S2", "S3", "S4"]
 
 
-def compute_snr(t2_data, mask_data, tissue_label):
+# =============================================================================
+# CORE METRIC FUNCTIONS
+# =============================================================================
+
+def extract_ga_from_session(session_id: str) -> Optional[int]:
+    """
+    Extract gestational age (GA) in weeks from session_id.
+    
+    Session ID format: YYYY.MM.DD-XXXW-MR_EI_Fetal_Neuro-NNNNN
+                       or YYYY.MM.DD-XXXY-MR_EI_Fetal_Neuro-NNNNN
+    where XXX is the gestational age in weeks (e.g., 032W or 032Y).
+    
+    Parameters
+    ----------
+    session_id : str
+        Session identifier
+        
+    Returns
+    -------
+    int or None
+        Gestational age in weeks, or None if cannot be parsed
+    """
+    try:
+        # Split by '-' and look for the GA component (e.g., '032Y' or '032W')
+        parts = session_id.split('-')
+        if len(parts) >= 2:
+            ga_part = parts[1]  # Should be something like '032Y' or '032W'
+            # Extract numeric part (first 3 characters)
+            ga_str = ga_part[:3]
+            if ga_str.isdigit():
+                return int(ga_str)
+    except Exception as e:
+        print(f"  Warning: Could not extract GA from session_id '{session_id}': {e}")
+    
+    return None
+
+
+def compute_snr(t2_data: np.ndarray, mask_data: np.ndarray, 
+                tissue_labels: Union[int, List[int]]) -> float:
     """
     Compute Signal-to-Noise Ratio for a tissue type.
-
+    
     SNR = mean(signal) / std(signal)
-
-    This uses the standard deviation within the tissue as a noise proxy,
-    which is appropriate when no background region is available.
-
-    Parameters:
-    -----------
+    
+    Uses standard deviation within tissue as noise proxy (appropriate when
+    no clean background region is available in fetal brain imaging).
+    
+    Parameters
+    ----------
     t2_data : np.ndarray
         T2 image volume
     mask_data : np.ndarray
         Segmentation mask
-    tissue_label : int or list
+    tissue_labels : int or list
         Label(s) for the tissue of interest
-
-    Returns:
-    --------
-    snr : float
-        Signal-to-noise ratio
         
-        #  Add support for multiple labels
+    Returns
+    -------
+    float
+        Signal-to-noise ratio, or np.nan if computation fails
     """
-    if isinstance(tissue_label, int):
-        tissue_label = [tissue_label]
-
-    tissue_mask = np.isin(mask_data, tissue_label)
-    tissue_intensities = t2_data[tissue_mask]
-
-    if len(tissue_intensities) == 0:
+    if isinstance(tissue_labels, int):
+        tissue_labels = [tissue_labels]
+    
+    tissue_mask = np.isin(mask_data, tissue_labels)
+    intensities = t2_data[tissue_mask]
+    
+    if len(intensities) == 0:
         return np.nan
-
-    mean_signal = np.mean(tissue_intensities)
-    std_signal = np.std(tissue_intensities)
-
+    
+    mean_signal = np.mean(intensities)
+    std_signal = np.std(intensities)
+    
     if std_signal == 0:
         return np.nan
-
+    
     return mean_signal / std_signal
 
 
-def compute_cnr(
-    t2_data, mask_data, tissue_a_labels, tissue_b_labels, noise_labels=None
-):
+def compute_cnr(t2_data: np.ndarray, mask_data: np.ndarray,
+                labels_a: Union[int, List[int]], 
+                labels_b: Union[int, List[int]]) -> float:
     """
     Compute Contrast-to-Noise Ratio between two tissue types.
-
-    CNR = |mean(A) - mean(B)| / noise_estimate
-
-    Parameters:
-    -----------
+    
+    CNR = |mean(A) - mean(B)| / pooled_std
+    
+    Parameters
+    ----------
     t2_data : np.ndarray
         T2 image volume
     mask_data : np.ndarray
         Segmentation mask
-    tissue_a_labels : int or list
-        Label(s) for tissue A (e.g., subplate)
-    tissue_b_labels : int or list
-        Label(s) for tissue B (e.g., cortical plate)
-    noise_labels : int or list, optional
-        Label(s) to use for noise estimation. If None, uses tissue A.
-
-    Returns:
-    --------
-    cnr : float
-        Contrast-to-noise ratio
+    labels_a : int or list
+        Label(s) for tissue A
+    labels_b : int or list
+        Label(s) for tissue B
+        
+    Returns
+    -------
+    float
+        Contrast-to-noise ratio, or np.nan if computation fails
     """
-    if isinstance(tissue_a_labels, int):
-        tissue_a_labels = [tissue_a_labels]
-    if isinstance(tissue_b_labels, int):
-        tissue_b_labels = [tissue_b_labels]
-
-    mask_a = np.isin(mask_data, tissue_a_labels)
-    mask_b = np.isin(mask_data, tissue_b_labels)
-
+    if isinstance(labels_a, int):
+        labels_a = [labels_a]
+    if isinstance(labels_b, int):
+        labels_b = [labels_b]
+    
+    mask_a = np.isin(mask_data, labels_a)
+    mask_b = np.isin(mask_data, labels_b)
+    
     intensities_a = t2_data[mask_a]
     intensities_b = t2_data[mask_b]
-
+    
     if len(intensities_a) == 0 or len(intensities_b) == 0:
         return np.nan
-
+    
     mean_a = np.mean(intensities_a)
     mean_b = np.mean(intensities_b)
-
-    # Noise estimation
-    if noise_labels is not None:
-        if isinstance(noise_labels, int):
-            noise_labels = [noise_labels]
-        noise_mask = np.isin(mask_data, noise_labels)
-        noise_intensities = t2_data[noise_mask]
-        if len(noise_intensities) == 0:
-            noise_std = np.std(intensities_a)
-        else:
-            noise_std = np.std(noise_intensities)
-    else:
-        # Use pooled standard deviation of both tissues
-        noise_std = np.sqrt((np.var(intensities_a) + np.var(intensities_b)) / 2)
-
-    if noise_std == 0:
+    
+    # Pooled standard deviation
+    pooled_std = np.sqrt((np.var(intensities_a) + np.var(intensities_b)) / 2)
+    
+    if pooled_std == 0:
         return np.nan
-
-    return np.abs(mean_a - mean_b) / noise_std
-
-## Compute native volume
-def compute_scaling_factor(xfm_inv_path):
-    try:
-        A = np.loadtxt(xfm_inv_path)
-        scaling_factor = abs(np.linalg.det(A[:3, :3]))
-        return scaling_factor
-    except Exception as e:
-        print(f"Error loading transformation matrix {xfm_inv_path}: {e}")
-        return None
-
-def compute_native_volume(voxel_count, scaling_factor, voxel_size=0.5): # <- Voxel size will not change unless image is preprocessed differently
-    if scaling_factor is None or voxel_count is None:
-        return None
-
-    voxel_volume = voxel_size ** 3  # 0.125 mm³
-    return voxel_count * voxel_volume * scaling_factor
+    
+    return np.abs(mean_a - mean_b) / pooled_std
 
 
-def compute_tissue_stats(t2_data, mask_data, labels):
+def compute_tissue_stats(t2_data: np.ndarray, mask_data: np.ndarray,
+                         labels: Union[int, List[int]]) -> Dict:
     """
     Compute basic statistics for a tissue region.
-
-    Returns:
-    --------
-    dict with mean, std, min, max, volume (voxel count)
+    
+    Parameters
+    ----------
+    t2_data : np.ndarray
+        T2 image volume
+    mask_data : np.ndarray
+        Segmentation mask
+    labels : int or list
+        Label(s) for the tissue
+        
+    Returns
+    -------
+    dict
+        Dictionary with mean, std, voxel_count
     """
     if isinstance(labels, int):
         labels = [labels]
-
+    
     mask = np.isin(mask_data, labels)
     intensities = t2_data[mask]
-
+    
     if len(intensities) == 0:
-        return {
-            "mean": np.nan,
-            "std": np.nan,
-            "min": np.nan,
-            "max": np.nan,
-            "volume_voxels": 0,
-        }
-
+        return {"mean": np.nan, "std": np.nan, "voxel_count": 0}
+    
     return {
         "mean": np.mean(intensities),
         "std": np.std(intensities),
-        "min": np.min(intensities),
-        "max": np.max(intensities),
-        "volume_voxels": len(intensities),
+        "voxel_count": int(np.sum(mask)),
     }
 
 
-# ============================================================
-# Subject Processing Functions
-# ============================================================
-
-
-def compute_subject_quality_metrics(
-    t2_path, seg_path, subject_id, session_id, xfm_inv_path, split="S1"
-):
+def compute_scaling_factor(xfm_inv_path: str) -> Optional[float]:
     """
-    Compute all image quality metrics for a single subject/split.
+    Extract scaling factor from inverse transformation matrix.
+    
+    The scaling factor is the absolute determinant of the 3x3 rotation/scaling
+    submatrix, representing the volume ratio between native and template space.
+    
+    Parameters
+    ----------
+    xfm_inv_path : str
+        Path to recon_to31_inv.xfm file
+        
+    Returns
+    -------
+    float or None
+        Scaling factor, or None if file cannot be loaded
+    """
+    try:
+        A = np.loadtxt(xfm_inv_path)
+        return abs(np.linalg.det(A[:3, :3]))
+    except Exception as e:
+        print(f"  Warning: Could not load {xfm_inv_path}: {e}")
+        return None
 
-    Parameters:
-    -----------
+
+def compute_native_volume(voxel_count: int, scaling_factor: Optional[float],
+                          voxel_size: float = VOXEL_SIZE_MM) -> Optional[float]:
+    """
+    Convert template-space voxel count to native anatomical volume (mm³).
+    
+    Formula: V_native = voxel_count × voxel_volume × scaling_factor
+    
+    Parameters
+    ----------
+    voxel_count : int
+        Number of voxels in template space
+    scaling_factor : float or None
+        Scaling factor from transformation matrix
+    voxel_size : float
+        Voxel size in mm (default 0.5mm isotropic)
+        
+    Returns
+    -------
+    float or None
+        Native volume in mm³
+    """
+    if scaling_factor is None or voxel_count is None:
+        return None
+    
+    voxel_volume = voxel_size ** 3  # 0.125 mm³ for 0.5mm voxels
+    return voxel_count * voxel_volume * scaling_factor
+
+
+# =============================================================================
+# SUBJECT/SPLIT PROCESSING
+# =============================================================================
+
+def compute_subject_split_metrics(t2_path: str, seg_path: str, 
+                                   xfm_inv_path: str,
+                                   subject_id: str, session_id: str, 
+                                   split: str) -> Optional[Dict]:
+    """
+    Compute all image quality metrics for a single subject-split.
+    
+    Parameters
+    ----------
     t2_path : str
         Path to T2 image (recon_to31_nuc.nii)
     seg_path : str
-        Path to segmentation mask
+        Path to SP model segmentation
+    xfm_inv_path : str
+        Path to inverse transformation matrix
     subject_id : str
         Subject identifier
     session_id : str
         Session identifier
     split : str
-        Split identifier (default 'S1')
-    xfm_inv_path: str
-        Path to inverse scaling .xfm file
-
-    Returns:
-    --------
-    dict with all computed metrics
+        Split identifier (S1, S2, S3, S4)
+        
+    Returns
+    -------
+    dict or None
+        Dictionary with all computed metrics, or None if loading fails
     """
     # Load data
     try:
         t2_data = nib.load(t2_path).get_fdata()
         seg_data = nib.load(seg_path).get_fdata()
     except Exception as e:
-        print(f"Error loading {subject_id}/{session_id}/{split}: {e}")
+        print(f"  Error loading {subject_id}/{session_id}/{split}: {e}")
         return None
-
-    # Define tissue labels (SP model)
-    SP_LABELS = [4, 5]  # Left/Right Subplate
-    CP_LABELS = [1, 42]  # Left/Right Cortical Plate
-    INNER_LABELS = [160, 161]  # Left/Right Inner region
-
+    
+    # Get scaling factor
+    scaling_factor = compute_scaling_factor(xfm_inv_path)
+    
     # Compute SNR for each tissue
-    snr_sp = compute_snr(t2_data, seg_data, SP_LABELS)
-    snr_cp = compute_snr(t2_data, seg_data, CP_LABELS)
-    snr_inner = compute_snr(t2_data, seg_data, INNER_LABELS)
-
+    snr_sp = compute_snr(t2_data, seg_data, TISSUE_LABELS["sp"])
+    snr_cp = compute_snr(t2_data, seg_data, TISSUE_LABELS["cp"])
+    snr_inner = compute_snr(t2_data, seg_data, TISSUE_LABELS["inner"])
+    
     # Compute CNR between tissue pairs
-    cnr_sp_cp = compute_cnr(t2_data, seg_data, SP_LABELS, CP_LABELS)
-    cnr_sp_inner = compute_cnr(t2_data, seg_data, SP_LABELS, INNER_LABELS)
-    cnr_cp_inner = compute_cnr(t2_data, seg_data, CP_LABELS, INNER_LABELS)
-
+    cnr_sp_cp = compute_cnr(t2_data, seg_data, TISSUE_LABELS["sp"], TISSUE_LABELS["cp"])
+    cnr_sp_inner = compute_cnr(t2_data, seg_data, TISSUE_LABELS["sp"], TISSUE_LABELS["inner"])
+    cnr_cp_inner = compute_cnr(t2_data, seg_data, TISSUE_LABELS["cp"], TISSUE_LABELS["inner"])
+    
     # Get tissue statistics
-    stats_sp = compute_tissue_stats(t2_data, seg_data, SP_LABELS)
-    stats_cp = compute_tissue_stats(t2_data, seg_data, CP_LABELS)
-    stats_inner = compute_tissue_stats(t2_data, seg_data, INNER_LABELS)
-
-    # Native volume
-    if xfm_inv_path is not None:
-        scaling_factor = compute_scaling_factor(xfm_inv_path)
-        native_vol_sp = compute_native_volume(stats_sp["volume_voxels"], scaling_factor)
-        native_vol_cp = compute_native_volume(stats_cp["volume_voxels"], scaling_factor)
-        native_vol_inner = compute_native_volume(stats_inner["volume_voxels"], scaling_factor)
-    else:
-        scaling_factor = None
-        native_vol_sp = None
-        native_vol_cp = None
-        native_vol_inner = None
-
+    stats_sp = compute_tissue_stats(t2_data, seg_data, TISSUE_LABELS["sp"])
+    stats_cp = compute_tissue_stats(t2_data, seg_data, TISSUE_LABELS["cp"])
+    stats_inner = compute_tissue_stats(t2_data, seg_data, TISSUE_LABELS["inner"])
+    
+    # Compute native volumes
+    native_vol_sp = compute_native_volume(stats_sp["voxel_count"], scaling_factor)
+    native_vol_cp = compute_native_volume(stats_cp["voxel_count"], scaling_factor)
+    native_vol_inner = compute_native_volume(stats_inner["voxel_count"], scaling_factor)
+    
+    # Extract gestational age
+    ga = extract_ga_from_session(session_id)
+    
     return {
+        # Identifiers
         "subject_id": subject_id,
         "session_id": session_id,
+        "ga": ga,
         "split": split,
         # SNR
         "snr_subplate": snr_sp,
@@ -269,15 +352,15 @@ def compute_subject_quality_metrics(
         # Tissue stats - Subplate
         "sp_mean_intensity": stats_sp["mean"],
         "sp_std_intensity": stats_sp["std"],
-        "sp_volume_voxels": stats_sp["volume_voxels"],
+        "sp_volume_voxels": stats_sp["voxel_count"],
         # Tissue stats - Cortical Plate
         "cp_mean_intensity": stats_cp["mean"],
         "cp_std_intensity": stats_cp["std"],
-        "cp_volume_voxels": stats_cp["volume_voxels"],
+        "cp_volume_voxels": stats_cp["voxel_count"],
         # Tissue stats - Inner
         "inner_mean_intensity": stats_inner["mean"],
         "inner_std_intensity": stats_inner["std"],
-        "inner_volume_voxels": stats_inner["volume_voxels"],
+        "inner_volume_voxels": stats_inner["voxel_count"],
         # Scaling and native volumes
         "scaling_factor": scaling_factor,
         "native_vol_sp": native_vol_sp,
@@ -286,408 +369,379 @@ def compute_subject_quality_metrics(
     }
 
 
-def compute_image_quality_metrics(
-    subjects_df, base_path, split="S1", output_csv="image_quality_metrics.csv"
-):
+def build_paths(base_path: str, subject_id: str, session_id: str, split: str) -> Dict[str, str]:
     """
-    Compute image quality metrics for all subjects.
+    Build file paths for a subject-split.
+    
+    Parameters
+    ----------
+    base_path : str
+        Base path to data directory
+    subject_id : str
+        Subject identifier
+    session_id : str
+        Session identifier
+    split : str
+        Split identifier
+        
+    Returns
+    -------
+    dict
+        Dictionary with t2_path, seg_path, xfm_inv_path
+    """
+    split_path = os.path.join(base_path, str(subject_id), str(session_id), split)
+    
+    return {
+        "t2_path": os.path.join(split_path, "recon_segmentation", "recon_to31_nuc.nii"),
+        "seg_path": os.path.join(
+            split_path, "segmentations",
+            f"{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii"
+        ),
+        "xfm_inv_path": os.path.join(
+            split_path, "recon_segmentation", "alignment_temp", "recon_to31_inv.xfm"
+        ),
+    }
 
-    Parameters:
-    -----------
+
+# =============================================================================
+# BATCH PROCESSING
+# =============================================================================
+
+def batch_compute_metrics(subjects_df: pd.DataFrame, base_path: str,
+                          splits: List[str] = SPLITS,
+                          output_csv: Optional[str] = "../data/image_quality_metrics.csv",
+                          verbose: bool = True) -> pd.DataFrame:
+    """
+    Compute image quality metrics for all subjects across all splits.
+    
+    Parameters
+    ----------
     subjects_df : pd.DataFrame
         DataFrame with 'subject_id' and 'session_id' columns
     base_path : str
         Base path to data directory
-    split : str
-        Which split to use for computing metrics (default 'S1')
-    output_csv : str
-        Path to save results CSV
-
-    Returns:
-    --------
-    pd.DataFrame with quality metrics for all subjects
+    splits : list
+        List of splits to process (default: S1-S4)
+    output_csv : str or None
+        Path to save output CSV (None to skip saving)
+    verbose : bool
+        Print progress messages
+        
+    Returns
+    -------
+    pd.DataFrame
+        Long-format DataFrame with one row per subject-split
     """
     results = []
-
+    total = len(subjects_df) * len(splits)
+    processed = 0
+    
     for idx, row in subjects_df.iterrows():
         subject_id = str(row["subject_id"])
         session_id = str(row["session_id"])
-
-        print(f"Processing {subject_id} ({idx + 1}/{len(subjects_df)})...")
-
-        # Build paths
-        split_path = os.path.join(base_path, subject_id, session_id, split)
-        t2_path = os.path.join(split_path, "recon_segmentation", "recon_to31_nuc.nii")
-        seg_path = os.path.join(
-            split_path,
-            "segmentations",
-            f"{subject_id}_{session_id}_nuc_deep_subplate_dilate_mc.nii",
-        )
-
-        # Check if files exist
-        if not os.path.exists(t2_path):
-            print(f"  Warning: T2 not found: {t2_path}")
-            continue
-        if not os.path.exists(seg_path):
-            print(f"  Warning: Segmentation not found: {seg_path}")
-            continue
-
-        # Compute metrics
-        metrics = compute_subject_quality_metrics(
-            t2_path, seg_path, subject_id, session_id, split
-        )
-
-        if metrics is not None:
-            results.append(metrics)
-            print(
-                f"  CNR(SP-CP): {metrics['cnr_sp_cp']:.2f}, SNR(SP): {metrics['snr_subplate']:.2f}"
+        
+        for split in splits:
+            processed += 1
+            
+            if verbose:
+                print(f"[{processed}/{total}] Processing {subject_id} - {split}...")
+            
+            paths = build_paths(base_path, subject_id, session_id, split)
+            
+            # Check files exist
+            missing = [k for k, v in paths.items() if not os.path.exists(v)]
+            if missing:
+                if verbose:
+                    print(f"  Warning: Missing files for {split}: {missing}")
+                continue
+            
+            # Compute metrics
+            metrics = compute_subject_split_metrics(
+                paths["t2_path"], paths["seg_path"], paths["xfm_inv_path"],
+                subject_id, session_id, split
             )
+            
+            if metrics is not None:
+                results.append(metrics)
+                if verbose:
+                    print(f"  SNR(SP): {metrics['snr_subplate']:.2f}, "
+                          f"SNR(CP): {metrics['snr_cortical_plate']:.2f}")
+    
+    df = pd.DataFrame(results)
+    
+    if output_csv and len(df) > 0:
+        df.to_csv(output_csv, index=False)
+        if verbose:
+            print(f"\nSaved {len(df)} records to: {output_csv}")
+    
+    return df
 
-    # Create DataFrame
-    quality_df = pd.DataFrame(results)
 
-    # Save to CSV
-    if output_csv:
-        quality_df.to_csv(output_csv, index=False)
-        print(f"\nSaved quality metrics to: {output_csv}")
-
-    return quality_df
-
-
-# ============================================================
-# Merge with Reliability Metrics
-# ============================================================
-
-
-def merge_quality_and_reliability(
-    quality_csv, reliability_csv, output_csv="combined_metrics.csv"
-):
+def update_existing_csv(subjects_df: pd.DataFrame, base_path: str,
+                        csv_path: str = "../data/image_quality_metrics.csv",
+                        splits: List[str] = SPLITS) -> pd.DataFrame:
     """
-    Merge image quality metrics with reliability metrics (Dice, etc.)
-
-    Parameters:
-    -----------
-    quality_csv : str
-        Path to image_quality_metrics.csv
-    reliability_csv : str
-        Path to cross_split_metrics.csv
-    output_csv : str
-        Path to save combined CSV
-
-    Returns:
-    --------
+    Update existing CSV with new subjects, avoiding recomputation.
+    
+    Parameters
+    ----------
+    subjects_df : pd.DataFrame
+        DataFrame with 'subject_id' and 'session_id' columns
+    base_path : str
+        Base path to data directory
+    csv_path : str
+        Path to existing CSV
+    splits : list
+        List of splits to process
+        
+    Returns
+    -------
+    pd.DataFrame
+        Updated DataFrame
     """
-    quality_df = pd.read_csv(quality_csv)
-    reliability_df = pd.read_csv(reliability_csv)
-
-    # Compute mean Dice per subject per model
-    reliability_summary = (
-        reliability_df.groupby(["subject_id", "session_id", "model"])
-        .agg(
-            {
-                "dice": ["mean", "std"],
-                "jaccard": ["mean", "std"],
-                "relative_diff": ["mean", "std"],
-            }
+    # Load existing data if present
+    if os.path.exists(csv_path):
+        existing_df = pd.read_csv(csv_path)
+        existing_keys = set(
+            zip(
+                existing_df["subject_id"].astype(str),
+                existing_df["session_id"].astype(str),
+                existing_df["split"].astype(str)
+            )
         )
-        .reset_index()
+        print(f"Found {len(existing_df)} existing records in {csv_path}")
+    else:
+        existing_df = pd.DataFrame()
+        existing_keys = set()
+    
+    # Find missing subject-splits
+    new_records = []
+    for _, row in subjects_df.iterrows():
+        subject_id = str(row["subject_id"])
+        session_id = str(row["session_id"])
+        
+        for split in splits:
+            key = (subject_id, session_id, split)
+            if key not in existing_keys:
+                new_records.append({"subject_id": subject_id, 
+                                    "session_id": session_id,
+                                    "split": split})
+    
+    if not new_records:
+        print("All subjects already processed. No updates needed.")
+        return existing_df
+    
+    print(f"Found {len(new_records)} new subject-splits to process")
+    
+    # Process new records
+    new_df = pd.DataFrame(new_records)
+    new_results = batch_compute_metrics(
+        new_df.drop_duplicates(subset=["subject_id", "session_id"]),
+        base_path,
+        splits=splits,
+        output_csv=None,  # Don't save yet
+        verbose=True
     )
-
-    # Flatten column names
-    reliability_summary.columns = [
-        "_".join(col).strip("_") for col in reliability_summary.columns
-    ]
-
-    # Merge
-    combined_df = quality_df.merge(
-        reliability_summary, on=["subject_id", "session_id"], how="left"
-    )
-
-
+    
+    # Combine and save
+    if len(existing_df) > 0:
+        combined_df = pd.concat([existing_df, new_results], ignore_index=True)
+    else:
+        combined_df = new_results
+    
+    combined_df.to_csv(csv_path, index=False)
+    print(f"Saved {len(combined_df)} total records to: {csv_path}")
+    
     return combined_df
 
 
-# ============================================================
-# Plotting Functions
-# ============================================================
+# =============================================================================
+# DERIVED METRICS (for analysis)
+# =============================================================================
 
-
-def plot_quality_vs_reliability(
-    combined_df,
-    model_filter="SP Model - Subplate",
-    quality_metric="cnr_sp_cp",
-    reliability_metric="dice_mean",
-    output_path=None,
-):
+def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Create scatter plot of image quality vs segmentation reliability.
-
-    Parameters:
-    -----------
-    combined_df : pd.DataFrame
-        DataFrame with both quality and reliability metrics
-    model_filter : str
-        Which model's reliability to plot
-    quality_metric : str
-        Column name for quality metric (x-axis)
-    reliability_metric : str
-        Column name for reliability metric (y-axis)
-    output_path : str, optional
-        Path to save figure
-
-    Returns:
-    --------
-    matplotlib Figure
+    Add derived metrics for analysis (split differences, means).
+    
+    This converts long format to wide format with additional computed columns.
+    Use this in summary_analysis.py for correlation analyses.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-format DataFrame from batch_compute_metrics
+        
+    Returns
+    -------
+    pd.DataFrame
+        Wide-format DataFrame with derived metrics
     """
-    # Filter to specific model
-    if "model" in combined_df.columns:
-        plot_df = combined_df[combined_df["model"] == model_filter].copy()
-    else:
-        plot_df = combined_df.copy()
-
-    # Remove NaN
-    plot_df = plot_df.dropna(subset=[quality_metric, reliability_metric])
-
-    if len(plot_df) < 3:
-        print(
-            f"Warning: Only {len(plot_df)} valid data points. Need at least 3 for correlation."
+    # Pivot to wide format
+    pivot_cols = [
+        "snr_subplate", "snr_cortical_plate", "snr_inner",
+        "sp_volume_voxels", "cp_volume_voxels", "inner_volume_voxels",
+        "native_vol_sp", "native_vol_cp", "native_vol_inner",
+        "scaling_factor"
+    ]
+    
+    result_dfs = []
+    
+    for col in pivot_cols:
+        if col not in df.columns:
+            continue
+        pivoted = df.pivot(
+            index=["subject_id", "session_id"],
+            columns="split",
+            values=col
         )
-        return None
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-
-    # Scatter plot
-    ax.scatter(
-        plot_df[quality_metric],
-        plot_df[reliability_metric],
-        s=80,
-        alpha=0.7,
-        edgecolors="black",
-        linewidth=0.5,
-    )
-
-    # Add subject labels
-    for _, row in plot_df.iterrows():
-        ax.annotate(
-            row["subject_id"],
-            (row[quality_metric], row[reliability_metric]),
-            fontsize=8,
-            alpha=0.7,
-            xytext=(5, 5),
-            textcoords="offset points",
-        )
-
-    # Compute correlation
-    r, p_value = stats.pearsonr(plot_df[quality_metric], plot_df[reliability_metric])
-
-    # Add regression line
-    z = np.polyfit(plot_df[quality_metric], plot_df[reliability_metric], 1)
-    p = np.poly1d(z)
-    x_line = np.linspace(
-        plot_df[quality_metric].min(), plot_df[quality_metric].max(), 100
-    )
-    ax.plot(
-        x_line,
-        p(x_line),
-        "r--",
-        alpha=0.8,
-        linewidth=2,
-        label=f"r = {r:.3f} (p = {p_value:.3f})",
-    )
-
-    # Labels and formatting
-    ax.set_xlabel(quality_metric.replace("_", " ").title(), fontsize=12)
-    ax.set_ylabel(reliability_metric.replace("_", " ").title(), fontsize=12)
-    ax.set_title(
-        f"Image Quality vs Segmentation Reliability\n{model_filter}",
-        fontsize=14,
-        fontweight="bold",
-    )
-    ax.legend(loc="lower right", fontsize=11)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-    if output_path:
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
-        print(f"Saved plot to: {output_path}")
-
-    return fig
-
-def plot_snr_cnr_comparison(quality_df):
-    """
-    Create side-by-side bar plots comparing SNR and CNR across tissue types.
+        pivoted.columns = [f"{col}_{split}" for split in pivoted.columns]
+        result_dfs.append(pivoted)
     
-    Parameters:
-    -----------
-    quality_df : pd.DataFrame
-        DataFrame with quality metrics
+    if not result_dfs:
+        return df
     
-    Returns:
-    --------
-    matplotlib Figure
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    wide_df = pd.concat(result_dfs, axis=1).reset_index()
     
-    # === Left plot: SNR comparison ===
-    snr_metrics = ['snr_subplate', 'snr_cortical_plate', 'snr_inner']
-    snr_labels = ['Subplate', 'Cortical Plate', 'Inner Region']
+    # Add SNR differences between independent split pairs
+    for tissue in ["subplate", "cortical_plate"]:
+        s1_col = f"snr_{tissue}_S1"
+        s2_col = f"snr_{tissue}_S2"
+        s3_col = f"snr_{tissue}_S3"
+        s4_col = f"snr_{tissue}_S4"
+        
+        if s1_col in wide_df.columns and s2_col in wide_df.columns:
+            wide_df[f"snr_{tissue}_diff_S1S2"] = abs(wide_df[s1_col] - wide_df[s2_col])
+        if s3_col in wide_df.columns and s4_col in wide_df.columns:
+            wide_df[f"snr_{tissue}_diff_S3S4"] = abs(wide_df[s3_col] - wide_df[s4_col])
     
-    snr_means = [quality_df[m].mean() for m in snr_metrics]
-    snr_stds = [quality_df[m].std() for m in snr_metrics]
+    # Add voxel count relative differences
+    for tissue in ["sp", "cp", "inner"]:
+        for pair, (s1, s2) in [("S1S2", ("S1", "S2")), ("S3S4", ("S3", "S4"))]:
+            col1 = f"{tissue}_volume_voxels_{s1}"
+            col2 = f"{tissue}_volume_voxels_{s2}"
+            
+            if col1 in wide_df.columns and col2 in wide_df.columns:
+                v1, v2 = wide_df[col1], wide_df[col2]
+                mean_val = (v1 + v2) / 2
+                wide_df[f"voxels_{tissue}_diff_{pair}"] = abs(v1 - v2)
+                wide_df[f"voxels_{tissue}_reldiff_{pair}"] = np.where(
+                    mean_val > 0,
+                    abs(v1 - v2) / mean_val * 100,
+                    0
+                )
     
-    x1 = np.arange(len(snr_labels))
-    bars1 = ax1.bar(x1, snr_means, yerr=snr_stds, capsize=5,
-                    color=['#e74c3c', '#3498db', '#2ecc71'],
-                    edgecolor='black', alpha=0.8)
+    # Add mean SNR across splits
+    for tissue in ["subplate", "cortical_plate"]:
+        snr_cols = [f"snr_{tissue}_{s}" for s in SPLITS if f"snr_{tissue}_{s}" in wide_df.columns]
+        if snr_cols:
+            wide_df[f"snr_{tissue}_mean"] = wide_df[snr_cols].mean(axis=1)
+            wide_df[f"snr_{tissue}_std"] = wide_df[snr_cols].std(axis=1)
     
-    ax1.set_xticks(x1)
-    ax1.set_xticklabels(snr_labels, fontsize=11)
-    ax1.set_ylabel('Signal-to-Noise Ratio (SNR)', fontsize=12)
-    ax1.set_title('SNR by Tissue Type\n(Mean ± SD across subjects)', fontsize=14, fontweight='bold')
-    ax1.grid(True, alpha=0.3, axis='y')
-    
-    for bar, mean in zip(bars1, snr_means):
-        ax1.annotate(f'{mean:.2f}',
-                     xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
-                     xytext=(0, 5), textcoords='offset points',
-                     ha='center', fontsize=11, fontweight='bold')
-    
-    # === Right plot: CNR comparison ===
-    cnr_metrics = ['cnr_sp_cp', 'cnr_sp_inner', 'cnr_cp_inner']
-    cnr_labels = ['Subplate vs\nCortical Plate', 'Subplate vs\nInner Region', 'Cortical Plate vs\nInner Region']
-    
-    cnr_means = [quality_df[m].mean() for m in cnr_metrics]
-    cnr_stds = [quality_df[m].std() for m in cnr_metrics]
-    
-    x2 = np.arange(len(cnr_labels))
-    bars2 = ax2.bar(x2, cnr_means, yerr=cnr_stds, capsize=5,
-                    color=['#9b59b6', '#f39c12', '#1abc9c'],
-                    edgecolor='black', alpha=0.8)
-    
-    ax2.set_xticks(x2)
-    ax2.set_xticklabels(cnr_labels, fontsize=11)
-    ax2.set_ylabel('Contrast-to-Noise Ratio (CNR)', fontsize=12)
-    ax2.set_title('CNR Between Tissue Boundaries\n(Mean ± SD across subjects)', fontsize=14, fontweight='bold')
-    ax2.grid(True, alpha=0.3, axis='y')
-    
-    for bar, mean in zip(bars2, cnr_means):
-        ax2.annotate(f'{mean:.2f}',
-                     xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
-                     xytext=(0, 5), textcoords='offset points',
-                     ha='center', fontsize=11, fontweight='bold')
-    
-    plt.tight_layout()
-    return fig
-# ============================================================
-# Summary Report Function
-# ============================================================
+    return wide_df
 
 
-def print_quality_summary(quality_df):
-    """Print a summary of image quality metrics."""
-    print("\n" + "=" * 60)
+# =============================================================================
+# SUMMARY/REPORTING
+# =============================================================================
+
+def print_summary(df: pd.DataFrame):
+    """Print summary statistics for image quality metrics."""
+    print("\n" + "=" * 70)
     print("IMAGE QUALITY METRICS SUMMARY")
-    print("=" * 60)
+    print("=" * 70)
+    
+    n_subjects = df[["subject_id", "session_id"]].drop_duplicates().shape[0]
+    n_splits = df["split"].nunique() if "split" in df.columns else "N/A"
+    n_records = len(df)
+    
+    print(f"\nDataset: {n_subjects} subjects, {n_splits} splits, {n_records} total records")
+    
+    # SNR summary
+    print("\n--- SNR by Tissue Type ---")
+    snr_cols = ["snr_subplate", "snr_cortical_plate", "snr_inner"]
+    for col in snr_cols:
+        if col in df.columns:
+            data = df[col].dropna()
+            print(f"  {col.replace('snr_', '').replace('_', ' ').title():20s}: "
+                  f"Mean={data.mean():.2f}, SD={data.std():.2f}, "
+                  f"Range=[{data.min():.2f}, {data.max():.2f}]")
+    
+    # CNR summary
+    print("\n--- CNR Between Tissues ---")
+    cnr_cols = ["cnr_sp_cp", "cnr_sp_inner", "cnr_cp_inner"]
+    for col in cnr_cols:
+        if col in df.columns:
+            data = df[col].dropna()
+            label = col.replace("cnr_", "").replace("_", " vs ").upper()
+            print(f"  {label:20s}: "
+                  f"Mean={data.mean():.2f}, SD={data.std():.2f}")
+    
+    # Volume summary (native)
+    print("\n--- Native Volumes (mm³) ---")
+    vol_cols = ["native_vol_sp", "native_vol_cp", "native_vol_inner"]
+    for col in vol_cols:
+        if col in df.columns:
+            data = df[col].dropna()
+            label = col.replace("native_vol_", "").upper()
+            print(f"  {label:10s}: Mean={data.mean():.1f}, SD={data.std():.1f}")
+    
+    print("\n" + "=" * 70)
 
-    metrics = {
-        "CNR (Subplate vs Cortical Plate)": "cnr_sp_cp",
-        "CNR (Subplate vs Inner)": "cnr_sp_inner",
-        "CNR (Cortical Plate vs Inner)": "cnr_cp_inner",
-        "SNR (Subplate)": "snr_subplate",
-        "SNR (Cortical Plate)": "snr_cortical_plate",
-        "SNR (Inner Region)": "snr_inner",
-    }
 
-    print(f"\nN subjects: {len(quality_df)}\n")
-    print(f"{'Metric':<35} {'Mean':>10} {'SD':>10} {'Min':>10} {'Max':>10}")
-    print("-" * 75)
+# =============================================================================
+# MAIN CLI
+# =============================================================================
 
-    for name, col in metrics.items():
-        data = quality_df[col].dropna()
-        print(
-            f"{name:<35} {data.mean():>10.2f} {data.std():>10.2f} {data.min():>10.2f} {data.max():>10.2f}"
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compute image quality metrics for fetal brain segmentation reliability study"
+    )
+    parser.add_argument(
+        "--subjects", "-s", required=True,
+        help="Path to subjects CSV (must have subject_id, session_id columns)"
+    )
+    parser.add_argument(
+        "--base_path", "-b", required=True,
+        help="Base path to data directory"
+    )
+    parser.add_argument(
+        "--output", "-o", default="../data/image_quality_metrics.csv",
+        help="Output CSV path (default: data/image_quality_metrics.csv)"
+    )
+    parser.add_argument(
+        "--update", "-u", action="store_true",
+        help="Update existing CSV (skip already processed subjects)"
+    )
+    parser.add_argument(
+        "--splits", nargs="+", default=SPLITS,
+        help="Splits to process (default: S1 S2 S3 S4)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Load subjects
+    subjects_df = pd.read_csv(args.subjects)
+    print(f"Found {len(subjects_df)} subjects in {args.subjects}")
+    
+    # Process
+    if args.update:
+        df = update_existing_csv(
+            subjects_df, args.base_path,
+            csv_path=args.output,
+            splits=args.splits
         )
+    else:
+        df = batch_compute_metrics(
+            subjects_df, args.base_path,
+            splits=args.splits,
+            output_csv=args.output
+        )
+    
+    # Print summary
+    print_summary(df)
+    
+    print("\nDone!")
 
-    print("\n" + "=" * 60)
-
-
-def print_volume_summary(subject_id, split_to_use, quality_metrics):
-    # Print native volume results
-    print("\n" + "=" * 60)
-    print("RAW VOLUME VS NATIVE VOLUME COMPARISION")
-    print("=" * 60)
-
-    print(f"\nNative volume comparision {subject_id} ({split_to_use}):")
-    print(f"  Scaling factor:        {quality_metrics['scaling_factor']:.2f}")
-    print(
-        f"  Sp voxel count vs native volume:        {quality_metrics['sp_volume_voxels']:.2f} -> {quality_metrics['native_vol_sp']:.2f}"
-    )
-    print(
-        f"  CP voxel count vs native volume:        {quality_metrics['cp_volume_voxels']:.2f} -> {quality_metrics['native_vol_cp']:.2f}"
-    )
-    print(
-        f"  Inner voxel count vs native volume:        {quality_metrics['inner_volume_voxels']:.2f} -> {quality_metrics['native_vol_inner']:.2f}"
-    )
-
-
-# ============================================================
-# Main execution example
-# ============================================================
 
 if __name__ == "__main__":
-    """
-    Example usage - modify paths as needed.
-    """
-    import sys
-
-    # Configuration - MODIFY THESE PATHS
-    BASE_PATH = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
-    SUBJECTS_CSV = "subjects_batched/test.csv"
-    RELIABILITY_CSV = "cross_split_metrics.csv"
-
-    # Check if files exist
-    if not os.path.exists(SUBJECTS_CSV):
-        print(f"Error: {SUBJECTS_CSV} not found.")
-        print("Run this script from the directory containing your subject.csv")
-        sys.exit(1)
-
-    # Load subjects
-    subjects_df = pd.read_csv(SUBJECTS_CSV)
-    print(f"Found {len(subjects_df)} subjects\n")
-
-    # Compute quality metrics
-    quality_df = compute_image_quality_metrics(
-        subjects_df, BASE_PATH, split="S1", output_csv="image_quality_metrics.csv"
-    )
-
-    # Print summary
-    print_quality_summary(quality_df)
-
-    # Generate distribution plots
-    plot_snr_cnr_comparison(quality_df, output_path="cnr_comparison.png")
-
-    # If reliability metrics exist, merge and plot correlation
-    if os.path.exists(RELIABILITY_CSV):
-        combined_df = merge_quality_and_reliability(
-            "image_quality_metrics.csv",
-            RELIABILITY_CSV,
-            output_csv="combined_metrics.csv",
-        )
-
-        # Plot for each model
-        for model in [
-            "SP Model - Subplate",
-            "SP Model - Cortical Plate",
-            "5-Label Model - Cortical Plate",
-        ]:
-            safe_name = model.replace(" ", "_").replace("-", "_").lower()
-            plot_quality_vs_reliability(
-                combined_df,
-                model_filter=model,
-                quality_metric="cnr_sp_cp",
-                reliability_metric="dice_mean",
-                output_path=f"quality_vs_reliability_{safe_name}.png",
-            )
-
-    print("\nDone!")
+    main()

@@ -38,7 +38,7 @@ for idx, row in subjects_df.iterrows():
             parameters={
                 'subject_id': subject_id,
                 'session_id': session_id,
-                'pdf_output_path': f"reports/{subject_id}_{session_id}_reliability_report.pdf" #Overwrite pdf path with new parameters
+                'pdf_output_path': f"../reports/{subject_id}_{session_id}_reliability_report.pdf" #Overwrite pdf path with new parameters
             },
             kernel_name='python3'
         )
