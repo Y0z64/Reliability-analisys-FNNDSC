@@ -583,9 +583,9 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
         "native_vol_sp", "native_vol_cp", "native_vol_inner",
         "scaling_factor"
     ]
-    
+
     result_dfs = []
-    
+
     for col in pivot_cols:
         if col not in df.columns:
             continue
@@ -596,30 +596,30 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
         )
         pivoted.columns = [f"{col}_{split}" for split in pivoted.columns]
         result_dfs.append(pivoted)
-    
+
     if not result_dfs:
         return df
-    
+
     wide_df = pd.concat(result_dfs, axis=1).reset_index()
-    
+
     # Add SNR differences between independent split pairs
     for tissue in ["subplate", "cortical_plate"]:
         s1_col = f"snr_{tissue}_S1"
         s2_col = f"snr_{tissue}_S2"
         s3_col = f"snr_{tissue}_S3"
         s4_col = f"snr_{tissue}_S4"
-        
+
         if s1_col in wide_df.columns and s2_col in wide_df.columns:
             wide_df[f"snr_{tissue}_diff_S1S2"] = abs(wide_df[s1_col] - wide_df[s2_col])
         if s3_col in wide_df.columns and s4_col in wide_df.columns:
             wide_df[f"snr_{tissue}_diff_S3S4"] = abs(wide_df[s3_col] - wide_df[s4_col])
-    
+
     # Add voxel count relative differences
     for tissue in ["sp", "cp", "inner"]:
         for pair, (s1, s2) in [("S1S2", ("S1", "S2")), ("S3S4", ("S3", "S4"))]:
             col1 = f"{tissue}_volume_voxels_{s1}"
             col2 = f"{tissue}_volume_voxels_{s2}"
-            
+
             if col1 in wide_df.columns and col2 in wide_df.columns:
                 v1, v2 = wide_df[col1], wide_df[col2]
                 mean_val = (v1 + v2) / 2
@@ -629,15 +629,81 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
                     abs(v1 - v2) / mean_val * 100,
                     0
                 )
-    
+
     # Add mean SNR across splits
     for tissue in ["subplate", "cortical_plate"]:
         snr_cols = [f"snr_{tissue}_{s}" for s in SPLITS if f"snr_{tissue}_{s}" in wide_df.columns]
         if snr_cols:
             wide_df[f"snr_{tissue}_mean"] = wide_df[snr_cols].mean(axis=1)
             wide_df[f"snr_{tissue}_std"] = wide_df[snr_cols].std(axis=1)
-    
+
     return wide_df
+
+
+# =============================================================================
+# DERIVED METRICS (for analysis)
+# =============================================================================
+
+
+def compute_independent_pair_diffs(quality_df):
+    """Compute native volume differences for S1-S2 and S3-S4 pairs."""
+    records = []
+
+    for (subj, sess), group in quality_df.groupby(["subject_id", "session_id"]):
+        ga = group["GA"].iloc[0]
+
+        for split1, split2 in [("S1", "S2"), ("S3", "S4")]:
+            s1 = group[group["split"] == split1]
+            s2 = group[group["split"] == split2]
+
+            if len(s1) == 0 or len(s2) == 0:
+                continue
+
+            # Get volumes for each tissue
+            sp1, sp2 = s1["native_vol_sp"].values[0], s2["native_vol_sp"].values[0]
+            cp1, cp2 = s1["native_vol_cp"].values[0], s2["native_vol_cp"].values[0]
+            inner1, inner2 = (
+                s1["native_vol_inner"].values[0],
+                s2["native_vol_inner"].values[0],
+            )
+
+            # Skip if any missing
+            if any(pd.isna([sp1, sp2, cp1, cp2, inner1, inner2])):
+                continue
+
+            total1 = sp1 + cp1 + inner1
+            total2 = sp2 + cp2 + inner2
+
+            # Absolute differences
+            abs_sp = abs(sp1 - sp2)
+            abs_cp = abs(cp1 - cp2)
+            abs_inner = abs(inner1 - inner2)
+            abs_total = abs(total1 - total2)
+
+            # Relative differences (%)
+            rel_sp = abs_sp / ((sp1 + sp2) / 2) * 100
+            rel_cp = abs_cp / ((cp1 + cp2) / 2) * 100
+            rel_inner = abs_inner / ((inner1 + inner2) / 2) * 100
+            rel_total = abs_total / ((total1 + total2) / 2) * 100
+
+            records.append(
+                {
+                    "subject_id": subj,
+                    "session_id": sess,
+                    "GA": ga,
+                    "split_pair": f"{split1}-{split2}",
+                    "abs_diff_sp": abs_sp,
+                    "abs_diff_cp": abs_cp,
+                    "abs_diff_inner": abs_inner,
+                    "abs_diff_total": abs_total,
+                    "rel_diff_sp": rel_sp,
+                    "rel_diff_cp": rel_cp,
+                    "rel_diff_inner": rel_inner,
+                    "rel_diff_total": rel_total,
+                }
+            )
+
+    return pd.DataFrame(records)
 
 
 # =============================================================================

@@ -11,7 +11,7 @@
 # 
 # 
 
-# In[17]:
+# In[3]:
 
 
 import pandas as pd
@@ -21,32 +21,19 @@ from scipy import stats
 
 # Load data and strip whitespace from column names AND string values
 reliability_df = pd.read_csv("../data/cross_split_metrics.csv")
-reliability_df.columns = reliability_df.columns.str.strip()
-# Strip whitespace from string columns
-for col in reliability_df.select_dtypes(include=['object']).columns:
-    reliability_df[col] = reliability_df[col].str.strip()
 
 quality_df = pd.read_csv("../data/image_quality_metrics.csv")
-quality_df.columns = quality_df.columns.str.strip()
-for col in quality_df.select_dtypes(include=['object']).columns:
-    quality_df[col] = quality_df[col].str.strip()
 
 infodump_df = pd.read_csv("../data/raw_subject_data.csv")
-infodump_df.columns = infodump_df.columns.str.strip()
-for col in infodump_df.select_dtypes(include=['object']).columns:
-    infodump_df[col] = infodump_df[col].str.strip()
 
 subjects_df = pd.read_csv("../data/subject.csv")
-subjects_df.columns = subjects_df.columns.str.strip()
-for col in subjects_df.select_dtypes(include=['object']).columns:
-    subjects_df[col] = subjects_df[col].str.strip()
 
 
-# In[2]:
+# In[4]:
 
 
 # Cell 1a Data access functions (LEAVE COLLAPSED)
-def get_split_data(quality_df, subject_id, split):
+def get_split_data(quality_df, subject_id, session_id, split):
     """
     Get data for a specific subject and split.
 
@@ -63,14 +50,16 @@ def get_split_data(quality_df, subject_id, split):
     --------
     pd.Series or None if not found
     """
-    mask = (quality_df["subject_id"].astype(str) == str(subject_id)) & (
-        quality_df["split"] == split
+    mask = (
+        (quality_df["subject_id"].astype(str) == str(subject_id))
+        & (quality_df["split"] == split)
+        & (quality_df["session_id"] == session_id)
     )
     result = quality_df[mask]
     return result.iloc[0] if len(result) > 0 else None
 
 
-def compute_split_pair_diff(quality_df, column, split1, split2, relative=True):
+def _compute_split_pair_diff(quality_df, column, split1, split2, relative=True):
     """
     Compute difference between two splits for a given column.
     Uses subject_id + session_id as unique identifier to handle subjects with multiple sessions.
@@ -156,8 +145,8 @@ def get_subject_across_splits(quality_df, subject_id, columns=None):
 
 
 def get_unique_subjects(quality_df):
-    """Get list of unique subject IDs."""
-    return quality_df["subject_id"].unique()
+    """Get list of unique subjects (subject_id, session_id) as tuples."""
+    return list(quality_df[["subject_id", "session_id"]].drop_duplicates().itertuples(index=False, name=None))
 
 
 def get_available_splits(quality_df):
@@ -165,7 +154,7 @@ def get_available_splits(quality_df):
     return sorted(quality_df["split"].unique())
 
 
-# In[18]:
+# In[5]:
 
 
 # Cell 1b Summary
@@ -185,33 +174,36 @@ print(f"\nModels in reliability data: {reliability_df['model'].unique().tolist()
 print(f"\nQuality metrics columns:")
 print(f"  {quality_df.columns.tolist()}")
 
+print(f"\nSubjects columns :")
+print(f"  {subjects_df.columns.tolist()}")
 
-# In[19]:
+
+# In[6]:
 
 
 # 1c. GA Distribution: Scatter Plot and Bar Plot Side by Side
-def plot_ga_distribution(subjects_df, quality_df):
+def plot_ga_distribution(quality_df):
     """
     Side-by-side scatter plot (GA vs Total Native Volume) and bar plot (GA distribution).
     GA values are floored and grouped by whole numbers.
-    """
-    # Floor GA values to whole numbers
-    subjects_df = subjects_df.copy()
-    subjects_df["GA_floored"] = np.floor(subjects_df["GA"]).astype(int)
-    subjects_df["subject_id"] = subjects_df["subject_id"].astype(str)
 
-    # Merge GA into quality_df
+    Parameters:
+    -----------
+    quality_df : pd.DataFrame
+        Long-format dataframe with native volume metrics and GA
+    """
     quality_df = quality_df.copy()
     quality_df["subject_id"] = quality_df["subject_id"].astype(str)
-    quality_merged = quality_df.merge(
-        subjects_df[["subject_id", "GA", "GA_floored"]], on="subject_id", how="left"
-    )
+    quality_df["session_id"] = quality_df["session_id"].astype(str)
+
+    # Floor GA values to whole numbers
+    quality_df["GA_floored"] = np.floor(quality_df["GA"]).astype(int)
 
     # Compute total native volume (sum of SP + CP + Inner)
-    quality_merged["total_native_vol"] = (
-        quality_merged["native_vol_sp"]
-        + quality_merged["native_vol_cp"]
-        + quality_merged["native_vol_inner"]
+    quality_df["total_native_vol"] = (
+        (quality_df["native_vol_sp"]
+        + quality_df["native_vol_cp"]
+        + quality_df["native_vol_inner"]) / 1000 #<- mm^3 to cm^3
     )
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
@@ -220,13 +212,13 @@ def plot_ga_distribution(subjects_df, quality_df):
     ax1 = axes[0]
 
     # Get unique subjects for color mapping
-    unique_subjects = quality_merged["subject_id"].unique()
+    unique_subjects = quality_df["subject_id"].unique()
     n_subjects = len(unique_subjects)
     subject_cmap = plt.cm.get_cmap("tab20", n_subjects)
     subject_colors = {subj: subject_cmap(i) for i, subj in enumerate(unique_subjects)}
 
     # Group by subject_id and session_id to plot 4 splits together
-    grouped = quality_merged.groupby(["subject_id", "session_id"])
+    grouped = quality_df.groupby(["subject_id", "session_id"])
 
     for (subj_id, sess_id), group in grouped:
         color = subject_colors[subj_id]
@@ -282,7 +274,7 @@ def plot_ga_distribution(subjects_df, quality_df):
         )
 
     ax1.set_xlabel("Gestational Age (weeks)", fontsize=12)
-    ax1.set_ylabel("Total Native Volume (mm³)", fontsize=12)
+    ax1.set_ylabel("Total Native Volume (cm³)", fontsize=12)
     ax1.set_title(
         "GA vs Total Brain Volume\n(Large dots = subject mean, ellipses = split spread)",
         fontsize=14,
@@ -290,10 +282,9 @@ def plot_ga_distribution(subjects_df, quality_df):
     )
     ax1.grid(True, alpha=0.3)
 
-    # Add correlation
-    # Use subject means for correlation
+    # Add correlation using subject means
     subject_means = (
-        quality_merged.groupby("subject_id")
+        quality_df.groupby(["subject_id", "session_id"])
         .agg({"GA": "mean", "total_native_vol": "mean"})
         .dropna()
     )
@@ -322,7 +313,9 @@ def plot_ga_distribution(subjects_df, quality_df):
     # === Right: Bar Plot (GA Distribution) ===
     ax2 = axes[1]
 
-    ga_counts = subjects_df["GA_floored"].value_counts().sort_index()
+    # Get unique subject/session combinations for GA distribution
+    ga_unique = quality_df.groupby(["subject_id", "session_id"])["GA_floored"].first()
+    ga_counts = ga_unique.value_counts().sort_index()
     ga_sorted = ga_counts.index.tolist()
     counts = ga_counts.values
 
@@ -354,10 +347,10 @@ def plot_ga_distribution(subjects_df, quality_df):
     ax2.set_title("GA Distribution", fontsize=14, fontweight="bold")
     ax2.grid(True, alpha=0.3, axis="y")
 
-    # Add summary statistics
-    total_n = len(subjects_df)
-    mean_ga = subjects_df["GA"].mean()
-    std_ga = subjects_df["GA"].std()
+    # Add summary statistics (unique subject/sessions)
+    total_n = len(ga_unique)
+    mean_ga = quality_df.groupby(["subject_id", "session_id"])["GA"].first().mean()
+    std_ga = quality_df.groupby(["subject_id", "session_id"])["GA"].first().std()
 
     ax2.text(
         0.95,
@@ -380,22 +373,22 @@ def plot_ga_distribution(subjects_df, quality_df):
     plt.tight_layout()
     return fig
 
-fig = plot_ga_distribution(subjects_df, quality_df)
+
+# Now only needs quality_df
+fig = plot_ga_distribution(quality_df)
 plt.show()
 
 
-# In[ ]:
+# In[13]:
 
 
-# 1d Compute Abs(Diff Native Vol) against GA
 # === Interactive Plot: Volume Difference vs GA with Polynomial Fits ===
 
 import plotly.graph_objects as go
 import plotly.express as px
 from itertools import combinations
 
-
-def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue="total"):
+def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue='total'):
     """
     Interactive plot showing absolute volume difference between splits vs GA.
     Each subject-session gets polynomial regression lines for their split-pair differences.
@@ -409,60 +402,58 @@ def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue="total"):
     """
     # Prepare data
     subjects_df = subjects_df.copy()
-    subjects_df["subject_id"] = subjects_df["subject_id"].astype(str)
-    subjects_df["session_id"] = subjects_df["session_id"].astype(str)
-    subjects_df["unique_id"] = (
-        subjects_df["subject_id"] + "_" + subjects_df["session_id"]
-    )
+    subjects_df['subject_id'] = subjects_df['subject_id'].astype(str)
+    subjects_df['session_id'] = subjects_df['session_id'].astype(str)
+    subjects_df['unique_id'] = subjects_df['subject_id'] + '_' + subjects_df['session_id']
 
     quality_df = quality_df.copy()
-    quality_df["subject_id"] = quality_df["subject_id"].astype(str)
-    quality_df["session_id"] = quality_df["session_id"].astype(str)
-    quality_df["unique_id"] = quality_df["subject_id"] + "_" + quality_df["session_id"]
+    quality_df['subject_id'] = quality_df['subject_id'].astype(str)
+    quality_df['session_id'] = quality_df['session_id'].astype(str)
+    quality_df['unique_id'] = quality_df['subject_id'] + '_' + quality_df['session_id']
 
     # Compute total native volume
-    quality_df["total_native_vol"] = (
-        quality_df["native_vol_sp"]
-        + quality_df["native_vol_cp"]
-        + quality_df["native_vol_inner"]
+    quality_df['total_native_vol'] = (
+        quality_df['native_vol_sp'] + 
+        quality_df['native_vol_cp'] + 
+        quality_df['native_vol_inner']
     )
 
     # Select volume column based on tissue
     vol_col = {
-        "total": "total_native_vol",
-        "sp": "native_vol_sp",
-        "cp": "native_vol_cp",
-        "inner": "native_vol_inner",
+        'total': 'total_native_vol',
+        'sp': 'native_vol_sp',
+        'cp': 'native_vol_cp',
+        'inner': 'native_vol_inner'
     }[tissue]
 
     tissue_name = {
-        "total": "Total Brain",
-        "sp": "Subplate",
-        "cp": "Cortical Plate",
-        "inner": "Inner",
+        'total': 'Total Brain',
+        'sp': 'Subplate',
+        'cp': 'Cortical Plate',
+        'inner': 'Inner'
     }[tissue]
 
     # Merge GA
     quality_merged = quality_df.merge(
-        subjects_df[["subject_id", "session_id", "GA", "unique_id"]],
-        on=["subject_id", "session_id", "unique_id"],
-        how="left",
+        subjects_df[['subject_id', 'session_id', 'unique_id']],
+        on=['subject_id', 'session_id', 'unique_id'],
+        how='left'
     )
 
     # Compute pairwise absolute differences for each subject-session
-    split_pairs = list(combinations(["S1", "S2", "S3", "S4"], 2))
+    split_pairs = list(combinations(['S1', 'S2', 'S3', 'S4'], 2))
 
     diff_records = []
-    for unique_id in quality_merged["unique_id"].unique():
-        subj_data = quality_merged[quality_merged["unique_id"] == unique_id]
-        ga = subj_data["GA"].iloc[0]
+    for unique_id in quality_merged['unique_id'].unique():
+        subj_data = quality_merged[quality_merged['unique_id'] == unique_id]
+        ga = subj_data['GA'].iloc[0]
 
         if pd.isna(ga):
             continue
 
         for split1, split2 in split_pairs:
-            vol1_row = subj_data[subj_data["split"] == split1]
-            vol2_row = subj_data[subj_data["split"] == split2]
+            vol1_row = subj_data[subj_data['split'] == split1]
+            vol2_row = subj_data[subj_data['split'] == split2]
 
             if len(vol1_row) == 0 or len(vol2_row) == 0:
                 continue
@@ -477,18 +468,16 @@ def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue="total"):
             mean_vol = (vol1 + vol2) / 2
             rel_diff = abs_diff / mean_vol * 100 if mean_vol > 0 else 0
 
-            diff_records.append(
-                {
-                    "unique_id": unique_id,
-                    "subject_id": subj_data["subject_id"].iloc[0],
-                    "session_id": subj_data["session_id"].iloc[0],
-                    "GA": ga,
-                    "split_pair": f"{split1}-{split2}",
-                    "abs_diff": abs_diff,
-                    "rel_diff": rel_diff,
-                    "mean_vol": mean_vol,
-                }
-            )
+            diff_records.append({
+                'unique_id': unique_id,
+                'subject_id': subj_data['subject_id'].iloc[0],
+                'session_id': subj_data['session_id'].iloc[0],
+                'GA': ga,
+                'split_pair': f'{split1}-{split2}',
+                'abs_diff': abs_diff,
+                'rel_diff': rel_diff,
+                'mean_vol': mean_vol
+            })
 
     diff_df = pd.DataFrame(diff_records)
 
@@ -496,58 +485,48 @@ def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue="total"):
     fig = go.Figure()
 
     # Color palette for subjects
-    unique_subjects = diff_df["unique_id"].unique()
+    unique_subjects = diff_df['unique_id'].unique()
     colors = px.colors.qualitative.Dark24 + px.colors.qualitative.Light24
-    color_map = {
-        subj: colors[i % len(colors)] for i, subj in enumerate(unique_subjects)
-    }
+    color_map = {subj: colors[i % len(colors)] for i, subj in enumerate(unique_subjects)}
 
     # Plot each subject's data points
     for unique_id in unique_subjects:
-        subj_data = diff_df[diff_df["unique_id"] == unique_id]
+        subj_data = diff_df[diff_df['unique_id'] == unique_id]
         color = color_map[unique_id]
 
         # Add scatter points for all split pairs
-        fig.add_trace(
-            go.Scatter(
-                x=subj_data["GA"],
-                y=subj_data["abs_diff"],
-                mode="markers",
-                marker=dict(
-                    size=10, color=color, opacity=0.7, line=dict(width=1, color="black")
-                ),
-                name=unique_id,
-                text=[
-                    f"Subject: {row['unique_id']}<br>Split Pair: {row['split_pair']}<br>Abs Diff: {row['abs_diff']:.1f} mm³<br>Rel Diff: {row['rel_diff']:.1f}%"
-                    for _, row in subj_data.iterrows()
-                ],
-                hoverinfo="text",
-                legendgroup=unique_id,
-                showlegend=True,
-            )
-        )
+        fig.add_trace(go.Scatter(
+            x=subj_data['GA'],
+            y=subj_data['abs_diff'],
+            mode='markers',
+            marker=dict(size=10, color=color, opacity=0.7, line=dict(width=1, color='black')),
+            name=unique_id,
+            text=[f"Subject: {row['unique_id']}<br>Split Pair: {row['split_pair']}<br>Abs Diff: {row['abs_diff']:.1f} mm³<br>Rel Diff: {row['rel_diff']:.1f}%" 
+                  for _, row in subj_data.iterrows()],
+            hoverinfo='text',
+            legendgroup=unique_id,
+            showlegend=True
+        ))
 
         # Connect points for same subject with a vertical line (showing spread)
-        ga_val = subj_data["GA"].iloc[0]
-        min_diff = subj_data["abs_diff"].min()
-        max_diff = subj_data["abs_diff"].max()
+        ga_val = subj_data['GA'].iloc[0]
+        min_diff = subj_data['abs_diff'].min()
+        max_diff = subj_data['abs_diff'].max()
 
-        fig.add_trace(
-            go.Scatter(
-                x=[ga_val, ga_val],
-                y=[min_diff, max_diff],
-                mode="lines",
-                line=dict(color=color, width=2, dash="solid"),
-                legendgroup=unique_id,
-                showlegend=False,
-                hoverinfo="skip",
-            )
-        )
+        fig.add_trace(go.Scatter(
+            x=[ga_val, ga_val],
+            y=[min_diff, max_diff],
+            mode='lines',
+            line=dict(color=color, width=2, dash='solid'),
+            legendgroup=unique_id,
+            showlegend=False,
+            hoverinfo='skip'
+        ))
 
     # Fit polynomial regression across ALL data points
     # This shows the overall trend of how volume differences scale with GA
-    all_ga = diff_df["GA"].values
-    all_diff = diff_df["abs_diff"].values
+    all_ga = diff_df['GA'].values
+    all_diff = diff_df['abs_diff'].values
 
     # Fit 2nd degree polynomial
     z = np.polyfit(all_ga, all_diff, 2)
@@ -555,238 +534,64 @@ def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue="total"):
 
     ga_range = np.linspace(all_ga.min(), all_ga.max(), 100)
 
-    fig.add_trace(
-        go.Scatter(
-            x=ga_range,
-            y=p(ga_range),
-            mode="lines",
-            line=dict(color="red", width=3, dash="dash"),
-            name=f"Polynomial Fit (degree=2)",
-            hoverinfo="skip",
-        )
-    )
+    fig.add_trace(go.Scatter(
+        x=ga_range,
+        y=p(ga_range),
+        mode='lines',
+        line=dict(color='red', width=3, dash='dash'),
+        name=f'Polynomial Fit (degree=2)',
+        hoverinfo='skip'
+    ))
 
     # Add confidence bands (using residuals)
     residuals = all_diff - p(all_ga)
     std_resid = np.std(residuals)
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.concatenate([ga_range, ga_range[::-1]]),
-            y=np.concatenate(
-                [p(ga_range) + 2 * std_resid, (p(ga_range) - 2 * std_resid)[::-1]]
-            ),
-            fill="toself",
-            fillcolor="rgba(255, 0, 0, 0.1)",
-            line=dict(color="rgba(255,0,0,0)"),
-            name="95% CI",
-            hoverinfo="skip",
-        )
-    )
+    fig.add_trace(go.Scatter(
+        x=np.concatenate([ga_range, ga_range[::-1]]),
+        y=np.concatenate([p(ga_range) + 2*std_resid, (p(ga_range) - 2*std_resid)[::-1]]),
+        fill='toself',
+        fillcolor='rgba(255, 0, 0, 0.1)',
+        line=dict(color='rgba(255,0,0,0)'),
+        name='95% CI',
+        hoverinfo='skip'
+    ))
 
     # Calculate correlation
     r, p_val = stats.pearsonr(all_ga, all_diff)
 
     fig.update_layout(
         title=dict(
-            text=f"{tissue_name} Volume: Absolute Difference Between Splits vs GA<br>"
-            + f"<sub>r = {r:.3f}, p = {p_val:.3f}, N = {len(unique_subjects)} subject-sessions</sub>",
-            font=dict(size=16),
+            text=f'{tissue_name} Volume: Absolute Difference Between Splits vs GA<br>' +
+                 f'<sub>r = {r:.3f}, p = {p_val:.3f}, N = {len(unique_subjects)} subject-sessions</sub>',
+            font=dict(size=16)
         ),
-        xaxis_title="Gestational Age (weeks)",
-        yaxis_title="Absolute Volume Difference (mm³)",
-        hovermode="closest",
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02, font=dict(size=9)),
+        xaxis_title='Gestational Age (weeks)',
+        yaxis_title='Absolute Volume Difference (mm³)',
+        hovermode='closest',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=9)
+        ),
         width=1100,
-        height=700,
+        height=700
     )
 
     return fig
-
-
-# === Alternative: Static matplotlib version with polynomial fits per split pair ===
-
-
-def plot_volume_diff_vs_ga_static(subjects_df, quality_df, tissue="total"):
-    """
-    Static plot showing absolute volume difference vs GA.
-    Fits separate polynomial curves for independent split pairs (S1-S2 and S3-S4).
-    """
-    # Prepare data (same as above)
-    subjects_df = subjects_df.copy()
-    subjects_df["subject_id"] = subjects_df["subject_id"].astype(str)
-    subjects_df["session_id"] = subjects_df["session_id"].astype(str)
-    subjects_df["unique_id"] = (
-        subjects_df["subject_id"] + "_" + subjects_df["session_id"]
-    )
-
-    quality_df = quality_df.copy()
-    quality_df["subject_id"] = quality_df["subject_id"].astype(str)
-    quality_df["session_id"] = quality_df["session_id"].astype(str)
-    quality_df["unique_id"] = quality_df["subject_id"] + "_" + quality_df["session_id"]
-
-    quality_df["total_native_vol"] = (
-        quality_df["native_vol_sp"]
-        + quality_df["native_vol_cp"]
-        + quality_df["native_vol_inner"]
-    )
-
-    vol_col = {
-        "total": "total_native_vol",
-        "sp": "native_vol_sp",
-        "cp": "native_vol_cp",
-        "inner": "native_vol_inner",
-    }[tissue]
-
-    tissue_name = {
-        "total": "Total Brain",
-        "sp": "Subplate",
-        "cp": "Cortical Plate",
-        "inner": "Inner",
-    }[tissue]
-
-    quality_merged = quality_df.merge(
-        subjects_df[["subject_id", "session_id", "GA", "unique_id"]],
-        on=["subject_id", "session_id", "unique_id"],
-        how="left",
-    )
-
-    # Compute differences for specific split pairs
-    split_pair_configs = [
-        ("S1", "S2", "S1-S2", "#e74c3c"),
-        ("S3", "S4", "S3-S4", "#3498db"),
-        ("S1", "S3", "S1-S3", "#2ecc71"),
-        ("S2", "S4", "S2-S4", "#9b59b6"),
-    ]
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # Collect all data for overall fit
-    all_ga = []
-    all_diff = []
-
-    for split1, split2, pair_name, color in split_pair_configs:
-        ga_list = []
-        diff_list = []
-
-        for unique_id in quality_merged["unique_id"].unique():
-            subj_data = quality_merged[quality_merged["unique_id"] == unique_id]
-            ga = subj_data["GA"].iloc[0]
-
-            if pd.isna(ga):
-                continue
-
-            vol1_row = subj_data[subj_data["split"] == split1]
-            vol2_row = subj_data[subj_data["split"] == split2]
-
-            if len(vol1_row) == 0 or len(vol2_row) == 0:
-                continue
-
-            vol1 = vol1_row[vol_col].values[0]
-            vol2 = vol2_row[vol_col].values[0]
-
-            if pd.isna(vol1) or pd.isna(vol2):
-                continue
-
-            abs_diff = abs(vol1 - vol2)
-            ga_list.append(ga)
-            diff_list.append(abs_diff)
-
-        if len(ga_list) < 3:
-            continue
-
-        ga_arr = np.array(ga_list)
-        diff_arr = np.array(diff_list)
-
-        all_ga.extend(ga_list)
-        all_diff.extend(diff_list)
-
-        # Scatter points
-        ax.scatter(
-            ga_arr,
-            diff_arr,
-            c=color,
-            s=60,
-            alpha=0.6,
-            edgecolors="black",
-            linewidths=0.5,
-            label=f"{pair_name} points",
-        )
-
-        # Polynomial fit (degree 2)
-        z = np.polyfit(ga_arr, diff_arr, 2)
-        p = np.poly1d(z)
-
-        ga_range = np.linspace(ga_arr.min(), ga_arr.max(), 100)
-        ax.plot(
-            ga_range,
-            p(ga_range),
-            color=color,
-            linewidth=2.5,
-            linestyle="-",
-            label=f"{pair_name} fit",
-        )
-
-    # Overall polynomial fit
-    if len(all_ga) >= 3:
-        all_ga = np.array(all_ga)
-        all_diff = np.array(all_diff)
-
-        z_all = np.polyfit(all_ga, all_diff, 2)
-        p_all = np.poly1d(z_all)
-
-        ga_range_all = np.linspace(all_ga.min(), all_ga.max(), 100)
-        ax.plot(
-            ga_range_all,
-            p_all(ga_range_all),
-            color="black",
-            linewidth=3,
-            linestyle="--",
-            label="Overall fit",
-        )
-
-        # Correlation
-        r, p_val = stats.pearsonr(all_ga, all_diff)
-        ax.text(
-            0.05,
-            0.95,
-            f"Overall: r = {r:.3f}, p = {p_val:.3f}",
-            transform=ax.transAxes,
-            fontsize=11,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-        )
-
-    ax.set_xlabel("Gestational Age (weeks)", fontsize=12)
-    ax.set_ylabel("Absolute Volume Difference (mm³)", fontsize=12)
-    ax.set_title(
-        f"{tissue_name}: Volume Difference Between Splits vs GA\n(Polynomial fits per split pair)",
-        fontsize=14,
-        fontweight="bold",
-    )
-    ax.legend(loc="upper left", fontsize=9)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    return fig
-
 
 # Run both versions
 subjects_df = pd.read_csv("../data/subject.csv")
 quality_df = pd.read_csv("../data/image_quality_metrics.csv")
 
 # Interactive version
-fig_interactive = plot_volume_diff_vs_ga_interactive(
-    subjects_df, quality_df, tissue="total"
-)
+fig_interactive = plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue='total')
 fig_interactive.show()
 
-# Static version with polynomial fits per split pair
-fig_static = plot_volume_diff_vs_ga_static(subjects_df, quality_df, tissue="total")
-plt.show()
 
-
-# In[ ]:
+# In[14]:
 
 
 # 2a: Dice per model
@@ -855,7 +660,7 @@ fig = plot_dice_by_model(reliability_df)
 plt.show()
 
 
-# In[ ]:
+# In[6]:
 
 
 # 2a: relative diff per model (TODO: Change this to absolute difference CHECK NOTES)
@@ -894,11 +699,19 @@ fig = plot_relative_diff_by_model(reliability_df)
 plt.show()
 
 
-# In[ ]:
+# In[7]:
 
 
-# 2a: Abs native volume diference across splits (subjects connected) TODO: ADd subject identifier or GA
-def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
+# 2a: Abs native volume diference across splits (subjects connected) TODO: Add subject identifier
+def _get_subject_colors(quality_df):
+    subjects = get_unique_subjects(quality_df)
+    n_subjects = len(subjects)
+    subject_cmap = plt.cm.get_cmap("tab20", n_subjects)
+    subject_colors = {subj: subject_cmap(i) for i, subj in enumerate(subjects)}
+    return subject_colors
+
+
+def _plot_measures_across_splits(quality_df, measure_configs, subject_colors, title, ylabel, labels = False):
     """
     Internal helper to plot boxplots with connected subject lines across splits.
 
@@ -915,12 +728,9 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
     """
     splits = get_available_splits(quality_df)
     subjects = get_unique_subjects(quality_df)
-    n_subjects = len(subjects)
 
     # Distinct colors for boxes and subjects
     box_colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12"]
-    subject_cmap = plt.cm.get_cmap("tab20", n_subjects)
-    subject_colors = {str(subj): subject_cmap(i) for i, subj in enumerate(subjects)}
 
     n_plots = len(measure_configs)
     fig, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 6))
@@ -929,10 +739,13 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
 
     for ax, (col_name, display_name) in zip(axes, measure_configs):
         # 1. Prepare Boxplot Data (Aggregate per split)
+        native = str(col_name).startswith("native") #<-Check if the col is a native value
         split_data = []
         for split in splits:
             # Use existing helper to get data for this split
             values = get_column_by_split(quality_df, col_name, split).dropna().values
+            if native:
+                values = values / 1000 #<- mm^3 to cm^3
             split_data.append(values)
 
         # 2. Draw Boxplot
@@ -945,13 +758,13 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
                 patch.set_alpha(0.4)
 
         # 3. Draw Connected Lines per Subject
-        for subj_id in subjects:
-            color = subject_colors[str(subj_id)]
+        for subj_id, ses_id in subjects:
+            color = subject_colors[(subj_id, ses_id)]
             x_pos, y_val = [], []
 
             for i, split in enumerate(splits):
                 # Use existing helper to get specific row for subject+split
-                row = get_split_data(quality_df, subj_id, split)
+                row = get_split_data(quality_df, subj_id, ses_id, split)
 
                 # Check if row exists and column is valid/not-NaN
                 if (
@@ -960,7 +773,10 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
                     and pd.notna(row[col_name])
                 ):
                     x_pos.append(i + 1)
-                    y_val.append(row[col_name])
+                    if native:
+                        y_val.append(row[col_name] / 1000)  # <- mm^3 to cm^3
+                    else:
+                        y_val.append(row[col_name]) 
 
             if x_pos:
                 # Scatter points
@@ -974,8 +790,23 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
                     linewidths=0.5,
                     zorder=3,
                 )
-                # Connected lines
-                ax.plot(x_pos, y_val, color=color, alpha=0.5, linewidth=1, zorder=2)
+                # Connected lines - only connect S1-S2 and S3-S4
+                # Split into two groups: [S1, S2] and [S3, S4]
+                for start_idx in [0, 2]:  # S1 at index 0, S3 at index 2
+                    group_x = []
+                    group_y = []
+                    for j in range(len(x_pos)):
+                        if x_pos[j] in [start_idx + 1, start_idx + 2]:  # S1-S2 or S3-S4
+                            group_x.append(x_pos[j])
+                            group_y.append(y_val[j])
+                    if len(group_x) >= 2:
+                        ax.plot(group_x, group_y, color=color, alpha=0.5, linewidth=1, zorder=2)
+
+                # Add subject_id label to the right of the line
+                if labels:
+                    if len(x_pos) > 0:
+                        ax.text(x_pos[-1] + 0.1, y_val[-1], f'{subj_id}', 
+                            fontsize=8, va='center', ha='left', color=color, alpha=0.7)
 
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_xlabel("Split", fontsize=12)
@@ -987,7 +818,7 @@ def _plot_measures_across_splits(quality_df, measure_configs, title, ylabel):
     return fig
 
 
-def plot_voxel_counts_by_split(quality_df):
+def plot_voxel_counts_by_split(quality_df, colors):
     """Plot raw voxel counts per split for SP and CP."""
     return _plot_measures_across_splits(
         quality_df,
@@ -996,12 +827,14 @@ def plot_voxel_counts_by_split(quality_df):
             ("cp_volume_voxels", "Cortical Plate"),
             ("inner_volume_voxels", "Inner"),
         ],
+        subject_colors=colors,
         title="Raw Voxel Counts Across Splits",
         ylabel="Voxel Count",
+        labels=True
     )
 
 
-def plot_native_volume_by_split(quality_df):
+def plot_native_volume_by_split(quality_df, colors):
     """Plot native volumes (mm³) per split for all tissues."""
     return _plot_measures_across_splits(
         quality_df,
@@ -1010,231 +843,30 @@ def plot_native_volume_by_split(quality_df):
             ("native_vol_cp", "Cortical Plate"),
             ("native_vol_inner", "Inner"),
         ],
+        subject_colors=colors,
         title="Native Volumes Across Splits",
-        ylabel="Native Volume (mm³)",
+        ylabel="Native Volume (cm³)",
+        labels=True
     )
 
-# fig1 = plot_voxel_counts_by_split(quality_df)
-# plt.show()
+colors = _get_subject_colors(quality_df)
 
-fig2 = plot_native_volume_by_split(quality_df)
+fig1 = plot_voxel_counts_by_split(quality_df, colors)
+plt.show()
+
+fig2 = plot_native_volume_by_split(quality_df, colors)
 plt.show()
 
 
-# In[ ]:
+# In[26]:
 
 
-# === CELL 5b: Subplate Voxel Count - Independent Split Pairs ===
-
-
-def plot_native_volume_split_pairs(quality_df, tissue="sp"):
-    """
-    Side-by-side box plots showing native volumes for independent split pairs.
-    S1-S2 and S3-S4 are independent pairs (no shared slices).
-    Each subject is color-coded and connected within each pair.
-    Percentage difference is displayed on each line.
-
-    Parameters:
-    -----------
-    quality_df : pd.DataFrame
-        Long-format dataframe
-    tissue : str
-        'sp' for subplate, 'cp' for cortical plate, 'inner' for inner tissue
-    """
-    tissue_names = {"sp": "Subplate", "cp": "Cortical Plate", "inner": "Inner"}
-    col_name = f"native_vol_{tissue}"
-    tissue_name = tissue_names.get(tissue, tissue)
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7))
-
-    # Generate colors for each subject
-    subjects = get_unique_subjects(quality_df)
-    n_subjects = len(subjects)
-    subject_cmap = plt.cm.get_cmap("tab20", n_subjects)
-    subject_colors = {str(subj): subject_cmap(i) for i, subj in enumerate(subjects)}
-
-    split_pairs = [
-        (["S1", "S2"], ["#e74c3c", "#3498db"], "S1 vs S2 (Independent Pair 1)"),
-        (["S3", "S4"], ["#2ecc71", "#f39c12"], "S3 vs S4 (Independent Pair 2)"),
-    ]
-
-    for ax_idx, (splits, box_colors, title) in enumerate(split_pairs):
-        ax = axes[ax_idx]
-
-        # Collect data for box plots
-        split_data = []
-        for split in splits:
-            values = get_column_by_split(quality_df, col_name, split).dropna().values
-            split_data.append(values)
-
-        # Draw box plots
-        bp = ax.boxplot(split_data, tick_labels=splits, patch_artist=True, widths=0.5)
-        for patch, color in zip(bp["boxes"], box_colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.4)
-
-        # Track relative differences for summary stats
-        rel_diffs = []
-
-        # Plot each subject's points and connect splits
-        for subj_id in subjects:
-            subj_str = str(subj_id)
-            color = subject_colors[subj_str]
-
-            row1 = get_split_data(quality_df, subj_id, splits[0])
-            row2 = get_split_data(quality_df, subj_id, splits[1])
-
-            if row1 is not None and row2 is not None:
-                val1 = row1.get(col_name, np.nan)
-                val2 = row2.get(col_name, np.nan)
-
-                if pd.notna(val1) and pd.notna(val2):
-                    ax.scatter(
-                        [1, 2],
-                        [val1, val2],
-                        color=color,
-                        s=50,
-                        alpha=0.8,
-                        edgecolors="black",
-                        linewidths=0.5,
-                        zorder=3,
-                    )
-                    ax.plot(
-                        [1, 2],
-                        [val1, val2],
-                        color=color,
-                        alpha=0.6,
-                        linewidth=1.5,
-                        zorder=2,
-                    )
-
-                    # Calculate and display relative difference
-                    mean_val = (val1 + val2) / 2
-                    rel_diff = abs(val1 - val2) / mean_val * 100
-                    rel_diffs.append(rel_diff)
-
-                    mid_y = (val1 + val2) / 2
-                    ax.text(
-                        1.5,
-                        mid_y,
-                        f"{rel_diff:.1f}%",
-                        fontsize=7,
-                        ha="center",
-                        va="center",
-                        color=color,
-                        fontweight="bold",
-                        bbox=dict(
-                            boxstyle="round,pad=0.15",
-                            facecolor="white",
-                            alpha=0.7,
-                            edgecolor="none",
-                        ),
-                    )
-
-        ax.set_ylabel("Native Volume (mm³)", fontsize=12)
-        ax.set_xlabel("Split", fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight="bold")
-        ax.grid(True, alpha=0.3, axis="y")
-
-        # Display mean relative difference
-        if rel_diffs:
-            mean_reldiff = np.mean(rel_diffs)
-            std_reldiff = np.std(rel_diffs)
-            ax.text(
-                0.5,
-                0.02,
-                f"Mean Rel. Diff: {mean_reldiff:.2f}% ± {std_reldiff:.2f}%",
-                transform=ax.transAxes,
-                ha="center",
-                fontsize=10,
-                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-            )
-
-    plt.suptitle(
-        f"{tissue_name} Native Volume: Independent Split Pairs",
-        fontsize=16,
-        fontweight="bold",
-        y=1.02,
-    )
-    plt.tight_layout()
-    return fig
-
-
-# Plot for Subplate
-fig = plot_native_volume_split_pairs(quality_df, tissue="sp")
-plt.show()
-
-# Plot for Cortical Plate
-fig = plot_native_volume_split_pairs(quality_df, tissue="cp")
-plt.show()
-
-# Plot for Inner tissue
-fig = plot_native_volume_split_pairs(quality_df, tissue="inner")
-plt.show()
-
-
-# In[ ]:
-
-
-# VOLUME BAR PLOT COMPAARISION PER SPLIT (GROUPED)
+# VOLUME BAR PLOT COMPARISON PER SPLIT (GROUPED)
 def plot_per_subject_voxel_counts(quality_df, tissue="sp"):
     """
     Bar plot showing voxel counts per subject for all 4 splits.
     Allows visual comparison of volume consistency within each subject.
-
-    Parameters:
-    -----------
-    quality_df : pd.DataFrame
-    tissue : str
-        'sp' for subplate, 'cp' for cortical plate
-    """
-    tissue_name = "Subplate" if tissue == "sp" else "Cortical Plate"
-
-    # Get subjects sorted by mean voxel count
-    subjects = quality_df["subject_id"].astype(str).values
-
-    splits = ["S1", "S2", "S3", "S4"]
-    colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12"]
-
-    fig, ax = plt.subplots(figsize=(16, 8))
-
-    x = np.arange(len(subjects))
-    width = 0.2
-
-    for i, (split, color) in enumerate(zip(splits, colors)):
-        col = f"voxels_{tissue}_{split}"
-        if col in quality_df.columns:
-            values = quality_df[col].values
-            offset = (i - 1.5) * width
-            ax.bar(
-                x + offset,
-                values,
-                width,
-                label=split,
-                color=color,
-                alpha=0.8,
-                edgecolor="black",
-            )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(subjects, rotation=45, ha="right", fontsize=9)
-    ax.set_xlabel("Subject ID", fontsize=12)
-    ax.set_ylabel("Voxel Count", fontsize=12)
-    ax.set_title(
-        f"{tissue_name} Voxel Count per Subject Across Splits",
-        fontsize=14,
-        fontweight="bold",
-    )
-    ax.legend(title="Split", loc="upper right")
-    ax.grid(True, alpha=0.3, axis="y")
-
-    plt.tight_layout()
-    return fig
-
-def plot_per_subject_native_volume(quality_df, tissue="sp"):
-    """
-    Bar plot showing native volumes per subject for all splits.
-    Allows visual comparison of volume consistency within each subject.
+    Subjects are ordered by mean voxel count (ascending).
 
     Parameters:
     -----------
@@ -1244,22 +876,35 @@ def plot_per_subject_native_volume(quality_df, tissue="sp"):
         'sp' for subplate, 'cp' for cortical plate, 'inner' for inner tissue
     """
     tissue_names = {"sp": "Subplate", "cp": "Cortical Plate", "inner": "Inner"}
-    col_name = f"native_vol_{tissue}"
+    col_name = f"{tissue}_volume_voxels"
     tissue_name = tissue_names.get(tissue, tissue)
 
     subjects = get_unique_subjects(quality_df)
     splits = get_available_splits(quality_df)
     colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12"]
 
+    # Calculate mean voxel count per subject for ordering
+    subject_means = {}
+    for (subj_id, ses_id) in subjects:
+        vals = []
+        for split in splits:
+            row = get_split_data(quality_df, subj_id, ses_id, split)
+            if row is not None and col_name in row.index and pd.notna(row[col_name]):
+                vals.append(row[col_name])
+        subject_means[(subj_id, ses_id)] = np.mean(vals) if vals else 0
+
+    # Sort subjects by mean voxel count (ascending)
+    subjects_sorted = sorted(subjects, key=lambda s: subject_means[s])
+
     fig, ax = plt.subplots(figsize=(16, 8))
 
-    x = np.arange(len(subjects))
+    x = np.arange(len(subjects_sorted))
     width = 0.2
 
     for i, split in enumerate(splits):
         values = []
-        for subj_id in subjects:
-            row = get_split_data(quality_df, subj_id, split)
+        for (subj_id, ses_id) in subjects_sorted:
+            row = get_split_data(quality_df, subj_id, ses_id, split)
             if row is not None and col_name in row.index:
                 values.append(row[col_name])
             else:
@@ -1277,21 +922,99 @@ def plot_per_subject_native_volume(quality_df, tissue="sp"):
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels([str(s) for s in subjects], rotation=45, ha="right", fontsize=9)
+    ax.set_xticklabels(
+        [str(s) for s, _ in subjects_sorted], rotation=45, ha="right", fontsize=9
+    )
     ax.set_xlabel("Subject ID", fontsize=12)
-    ax.set_ylabel("Native Volume (mm³)", fontsize=12)
+    ax.set_ylabel("Voxel Count", fontsize=12)
     ax.set_title(
-        f"{tissue_name} Native Volume per Subject Across Splits",
+        f"{tissue_name} Voxel Count per Subject Across Splits",
         fontsize=14,
         fontweight="bold",
     )
-    ax.legend(title="Split", loc="upper right")
+    ax.legend(title="Split", loc="upper left")
     ax.grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
     return fig
 
-quality_df_ordered = sorted(quality_df)
+def plot_per_subject_native_volume(quality_df, tissue="sp"):
+    """
+    Bar plot showing native volumes per subject for all splits.
+    Allows visual comparison of volume consistency within each subject.
+    Subjects are ordered by mean native volume (ascending).
+
+    Parameters:
+    -----------
+    quality_df : pd.DataFrame
+        Long-format dataframe
+    tissue : str
+        'sp' for subplate, 'cp' for cortical plate, 'inner' for inner tissue
+    """
+    tissue_names = {"sp": "Subplate", "cp": "Cortical Plate", "inner": "Inner"}
+    col_name = f"native_vol_{tissue}"
+    tissue_name = tissue_names.get(tissue, tissue)
+
+    subjects = get_unique_subjects(quality_df)
+    splits = get_available_splits(quality_df)
+    colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12"]
+
+    # Calculate mean native volume per subject for ordering
+    subject_means = {}
+    for (subj_id, ses_id) in subjects:
+        vals = []
+        for split in splits:
+            row = get_split_data(quality_df, subj_id, ses_id, split)
+            if row is not None and col_name in row.index and pd.notna(row[col_name]):
+                vals.append(row[col_name])
+        subject_means[(subj_id, ses_id)] = np.mean(vals) if vals else 0
+
+    # Sort subjects by mean native volume (ascending)
+    subjects_sorted = sorted(subjects, key=lambda s: subject_means[s])
+
+    fig, ax = plt.subplots(figsize=(16, 8))
+
+    x = np.arange(len(subjects_sorted))
+    width = 0.2
+
+    for i, split in enumerate(splits):
+        values = []
+        for (subj_id, ses_id) in subjects_sorted:
+            row = get_split_data(quality_df, subj_id, ses_id, split)
+            if row is not None and col_name in row.index:
+                # Convert mm³ to cm³
+                values.append(row[col_name] / 1000)
+            else:
+                values.append(np.nan)
+
+        offset = (i - 1.5) * width
+        ax.bar(
+            x + offset,
+            values,
+            width,
+            label=split,
+            color=colors[i],
+            alpha=0.8,
+            edgecolor="black",
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [str(s) for s, _ in subjects_sorted], rotation=45, ha="right", fontsize=9
+    )
+    ax.set_xlabel("Subject ID", fontsize=12)
+    ax.set_ylabel("Native Volume (cm³)", fontsize=12)
+    ax.set_title(
+        f"{tissue_name} Native Volume per Subject Across Splits",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.legend(title="Split", loc="upper left")
+    ax.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout()
+    return fig
+
 
 ## NATIVE VOLUMES
 print("=" * 60)
@@ -1323,11 +1046,12 @@ plt.show()
 fig = plot_per_subject_voxel_counts(quality_df, tissue="cp")
 plt.show()
 
+# Plot for Inner tissue
 fig = plot_per_subject_voxel_counts(quality_df, tissue="inner")
 plt.show()
 
 
-# In[ ]:
+# In[8]:
 
 
 # SNR PLOT
@@ -1338,7 +1062,7 @@ def plot_snr_by_split(quality_df):
 
     Uses long-format quality_df with columns: snr_subplate, snr_cortical_plate, snr_inner
     """
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     splits = get_available_splits(quality_df)
     colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12"]
@@ -1391,40 +1115,14 @@ plt.show()
 # In[ ]:
 
 
-# SNR VS NATIVE VOLUME COMPARISION
-
-def _compute_split_pair_diff(quality_df, column, split1, split2, relative=True):
-    """
-    Compute difference between two splits for a given column.
-    Uses subject_id + session_id as unique identifier to handle subjects with multiple sessions.
-    """
-    # Get data for each split
-    s1_df = quality_df[quality_df['split'] == split1][['subject_id', 'session_id', column]].copy()
-    s2_df = quality_df[quality_df['split'] == split2][['subject_id', 'session_id', column]].copy()
-
-    # Rename columns for merge
-    s1_df = s1_df.rename(columns={column: 'val1'})
-    s2_df = s2_df.rename(columns={column: 'val2'})
-
-    # Merge on subject_id AND session_id to handle subjects with multiple sessions
-    result = s1_df.merge(s2_df, on=['subject_id', 'session_id'], how='inner')
-
-    # Create a display label (subject_id only, for cleaner plot labels)
-    result['label'] = result['subject_id'].astype(str)
-
-    # Compute difference
-    if relative:
-        mean_val = (result['val1'] + result['val2']) / 2
-        result['diff'] = abs(result['val1'] - result['val2']) / mean_val * 100
-    else:
-        result['diff'] = abs(result['val1'] - result['val2'])
-
-    return result
+# SNR VS NATIVE VOLUME COMPARISON (ABSOLUTE DIFFERENCE)
+from sklearn.linear_model import RANSACRegressor, LinearRegression
 
 
 def plot_snr_volume_correlation(quality_df, split_pair=("S1", "S2")):
     """
-    Scatter plots showing correlation between SNR difference and native volume difference.
+    Scatter plots showing correlation between SNR difference and absolute native volume difference.
+    Uses RANSAC robust linear regression.
     """
     split1, split2 = split_pair
     pair_name = f"{split1}-{split2}"
@@ -1432,10 +1130,9 @@ def plot_snr_volume_correlation(quality_df, split_pair=("S1", "S2")):
     tissues = [
         ("snr_subplate", "native_vol_sp", "Subplate"),
         ("snr_cortical_plate", "native_vol_cp", "Cortical Plate"),
-        ("snr_inner", "native_vol_inner", "Inner"),
     ]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     for ax, (snr_col, vol_col, tissue_name) in zip(axes, tissues):
         # Compute SNR difference (absolute)
@@ -1444,30 +1141,33 @@ def plot_snr_volume_correlation(quality_df, split_pair=("S1", "S2")):
         )
         snr_diff_df = snr_diff_df.rename(columns={"diff": "snr_diff"})
 
-        # Compute native volume relative difference
+        # Compute native volume absolute difference (in mm³, will convert to cm³)
         vol_diff_df = _compute_split_pair_diff(
-            quality_df, vol_col, split1, split2, relative=True
+            quality_df, vol_col, split1, split2, relative=False
         )
-        vol_diff_df = vol_diff_df.rename(columns={"diff": "vol_reldiff"})
+        vol_diff_df = vol_diff_df.rename(columns={"diff": "vol_absdiff"})
 
         # Merge on subject_id AND session_id
         merged = snr_diff_df[["subject_id", "session_id", "label", "snr_diff"]].merge(
-            vol_diff_df[["subject_id", "session_id", "vol_reldiff"]], 
-            on=["subject_id", "session_id"]
+            vol_diff_df[["subject_id", "session_id", "vol_absdiff"]],
+            on=["subject_id", "session_id"],
         )
 
         if len(merged) < 3:
             ax.text(
-                0.5, 0.5,
+                0.5,
+                0.5,
                 f"Insufficient data\n(N={len(merged)})",
-                ha="center", va="center",
-                transform=ax.transAxes, fontsize=12,
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=12,
             )
             ax.set_title(f"{tissue_name}: {pair_name}")
             continue
 
-        x = merged["snr_diff"]
-        y = merged["vol_reldiff"]
+        x = merged["snr_diff"].values
+        y = merged["vol_absdiff"].values / 1000  # Convert mm³ to cm³
 
         ax.scatter(x, y, s=80, alpha=0.7, edgecolors="black")
 
@@ -1475,28 +1175,77 @@ def plot_snr_volume_correlation(quality_df, split_pair=("S1", "S2")):
         for _, row in merged.iterrows():
             ax.annotate(
                 row["label"][:8],
-                (row["snr_diff"], row["vol_reldiff"]),
-                fontsize=7, alpha=0.7,
-                xytext=(3, 3), textcoords="offset points",
+                (row["snr_diff"], row["vol_absdiff"] / 1000),
+                fontsize=7,
+                alpha=0.7,
+                xytext=(3, 3),
+                textcoords="offset points",
             )
 
-        # Regression line and correlation
+        # Pearson correlation (on original data)
         r, p = stats.pearsonr(x, y)
-        z = np.polyfit(x, y, 1)
-        p_line = np.poly1d(z)
-        x_line = np.linspace(x.min(), x.max(), 100)
-        ax.plot(x_line, p_line(x_line), "r--", alpha=0.8, linewidth=2)
+
+        # RANSAC robust linear regression
+        X_reshaped = x.reshape(-1, 1)
+
+        ransac = RANSACRegressor(
+            residual_threshold= np.std(y) * 1.5,
+            min_samples=0.5,  # Use at least 50% of data for fitting
+            random_state=42,
+        )
+        ransac.fit(X_reshaped, y)
+
+        # Get RANSAC statistics
+        inlier_mask = ransac.inlier_mask_
+        n_inliers = np.sum(inlier_mask)
+        r2_score = ransac.score(X_reshaped, y)
+
+        # Plot RANSAC regression line
+        x_line = np.linspace(x.min(), x.max(), 100).reshape(-1, 1)
+        y_line = ransac.predict(x_line)
+        ax.plot(x_line, y_line, "r--", alpha=0.8, linewidth=2, label="RANSAC fit")
+
+        # # SIMPLE LINEAR REGRESSION <=========================================
+        # z = np.polyfit(x, y, 1)
+        # p_line = np.poly1d(z)
+        # ax.plot(
+        #     x_line.flatten(),
+        #     p_line(x_line.flatten()),
+        #     "b-",
+        #     alpha=0.6,
+        #     linewidth=2,
+        #     label="OLS fit",
+        # )
+
+        # Mark outliers differently
+        outlier_mask = ~inlier_mask
+        if np.any(outlier_mask):
+            ax.scatter(
+                x[outlier_mask],
+                y[outlier_mask],
+                s=80,
+                alpha=0.7,
+                edgecolors="red",
+                linewidths=2,
+                facecolors="none",
+                label=f"Outliers ({np.sum(outlier_mask)})",
+            )
 
         ax.set_xlabel(f"|SNR Difference| ({pair_name})", fontsize=11)
-        ax.set_ylabel(f"Native Volume Rel. Diff % ({pair_name})", fontsize=11)
+        ax.set_ylabel(f"Native Volume Abs. Diff (cm³) ({pair_name})", fontsize=11)
         ax.set_title(
-            f"{tissue_name}\nr={r:.3f}, p={p:.3f}", fontsize=12, fontweight="bold"
+            f"{tissue_name}\nPearson: r={r:.3f}, p={p:.3f} | RANSAC: R²={r2_score:.3f}, inliers={n_inliers}/{len(x)}",
+            fontsize=11,
+            fontweight="bold",
         )
         ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=9)
 
     plt.suptitle(
         f"Image Quality (SNR) vs Segmentation Reliability ({pair_name})",
-        fontsize=14, fontweight="bold", y=1.02,
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
     )
     plt.tight_layout()
     return fig
@@ -1511,63 +1260,39 @@ fig = plot_snr_volume_correlation(quality_df, split_pair=("S3", "S4"))
 plt.show()
 
 
-# In[ ]:
-
-
-# Diagnostic cell - run this to see what's happening
-print("=== Quality DF Structure ===")
-print(f"Shape: {quality_df.shape}")
-print(f"Columns: {quality_df.columns.tolist()}")
-print(f"\nUnique subjects: {quality_df['subject_id'].nunique()}")
-print(f"Unique splits: {quality_df['split'].unique().tolist()}")
-print(f"\nRows per subject:")
-print(quality_df.groupby("subject_id").size().value_counts())
-
-print("\n=== Sample of data ===")
-print(
-    quality_df[
-        ["subject_id", "session_id", "split", "native_vol_sp", "snr_subplate"]
-    ].head(20)
-)
-
-print("\n=== Check for subject 1109332 ===")
-print(quality_df[quality_df["subject_id"].astype(str).str.contains("1109332")])
-
-print("\n=== Data types ===")
-print(quality_df[["subject_id", "split", "native_vol_sp"]].dtypes)
-
-
-# In[ ]:
+# In[11]:
 
 
 # === CELL 9: Correlation Matrix Heatmaps (S1-S2 and S3-S4) ===
+from statsmodels.stats.multitest import multipletests
 
 
-def plot_correlation_matrices(quality_df, infodump_df):
+def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
     """
     Create two correlation matrix heatmaps - one for S1-S2 and one for S3-S4.
 
     Each shows relationships between:
-    - Native volume relative difference (SP and CP)
+    - Native volume absolute difference (SP and CP) in cm³
     - GA (Gestational Age)
     - QA difference (between splits)
     - QA mean (overall reconstruction quality)
     - SNR difference
 
     Uses long-format quality_df and computes differences on the fly.
+    P-values are corrected for multiple comparisons using FDR (Benjamini-Hochberg).
     """
     # Prepare infodump data
     infodump = infodump_df.copy()
     infodump["subject_id"] = infodump["subject_id"].astype(str)
+    infodump["session_id"] = infodump["session_id"].astype(str)
 
-    # Calculate QA differences and means
+    # Calculate QA differences
     if "QA_S1" in infodump.columns and "QA_S2" in infodump.columns:
         infodump["qa_diff_S1S2"] = abs(infodump["QA_S1"] - infodump["QA_S2"])
     if "QA_S3" in infodump.columns and "QA_S4" in infodump.columns:
         infodump["qa_diff_S3S4"] = abs(infodump["QA_S3"] - infodump["QA_S4"])
 
     # QA means should already be in the data as QA12_mean and QA34_mean
-    # If not, compute them
     if "QA12_mean" not in infodump.columns and "QA_S1" in infodump.columns:
         infodump["QA12_mean"] = (infodump["QA_S1"] + infodump["QA_S2"]) / 2
     if "QA34_mean" not in infodump.columns and "QA_S3" in infodump.columns:
@@ -1593,51 +1318,76 @@ def plot_correlation_matrices(quality_df, infodump_df):
         ax = axes[ax_idx]
         split1, split2 = config["splits"]
 
-        # Compute native volume differences
-        vol_sp_diff = compute_split_pair_diff(
-            quality_df, "native_vol_sp", split1, split2, relative=True
+        if print_diagnostics:
+            print(f"\n{'='*60}")
+            print(f"Processing {pair_name}")
+            print(f"{'='*60}")
+
+        # Compute native volume ABSOLUTE differences (then convert to cm³)
+        vol_sp_diff = _compute_split_pair_diff(
+            quality_df, "native_vol_sp", split1, split2, relative=False
         )
-        vol_sp_diff = vol_sp_diff.rename(columns={"diff": "vol_sp_reldiff"})
+        vol_sp_diff["vol_sp_absdiff"] = vol_sp_diff["diff"] / 1000  # mm³ to cm³
         vol_sp_diff["subject_id"] = vol_sp_diff["subject_id"].astype(str)
+        vol_sp_diff["session_id"] = vol_sp_diff["session_id"].astype(str)
 
-        vol_cp_diff = compute_split_pair_diff(
-            quality_df, "native_vol_cp", split1, split2, relative=True
+        vol_cp_diff = _compute_split_pair_diff(
+            quality_df, "native_vol_cp", split1, split2, relative=False
         )
-        vol_cp_diff = vol_cp_diff.rename(columns={"diff": "vol_cp_reldiff"})
+        vol_cp_diff["vol_cp_absdiff"] = vol_cp_diff["diff"] / 1000  # mm³ to cm³
         vol_cp_diff["subject_id"] = vol_cp_diff["subject_id"].astype(str)
+        vol_cp_diff["session_id"] = vol_cp_diff["session_id"].astype(str)
 
-        # Compute SNR differences (for SP)
-        snr_diff = compute_split_pair_diff(
+        # Compute SNR differences (absolute)
+        snr_diff = _compute_split_pair_diff(
             quality_df, "snr_subplate", split1, split2, relative=False
         )
         snr_diff = snr_diff.rename(columns={"diff": "snr_diff"})
         snr_diff["subject_id"] = snr_diff["subject_id"].astype(str)
+        snr_diff["session_id"] = snr_diff["session_id"].astype(str)
 
-        # Merge all data
+        if print_diagnostics:
+            print(f"\nVolume SP diff subjects: {len(vol_sp_diff)}")
+            print(f"Volume CP diff subjects: {len(vol_cp_diff)}")
+            print(f"SNR diff subjects: {len(snr_diff)}")
+
+        # Merge all data on BOTH subject_id AND session_id
         merged = (
-            vol_sp_diff[["subject_id", "vol_sp_reldiff"]]
+            vol_sp_diff[["subject_id", "session_id", "vol_sp_absdiff"]]
             .merge(
-                vol_cp_diff[["subject_id", "vol_cp_reldiff"]],
-                on="subject_id",
-                how="outer",
+                vol_cp_diff[["subject_id", "session_id", "vol_cp_absdiff"]],
+                on=["subject_id", "session_id"],
+                how="inner",
             )
-            .merge(snr_diff[["subject_id", "snr_diff"]], on="subject_id", how="outer")
+            .merge(
+                snr_diff[["subject_id", "session_id", "snr_diff"]],
+                on=["subject_id", "session_id"],
+                how="inner",
+            )
         )
 
-        # Add infodump columns
-        cols_to_add = ["subject_id", "GA"]
+        if print_diagnostics:
+            print(f"After merging volume and SNR diffs: {len(merged)} subjects")
+
+        # Add infodump columns - merge on BOTH subject_id AND session_id
+        cols_to_add = ["subject_id", "session_id", "GA"]
         if config["qa_diff_col"] in infodump.columns:
             cols_to_add.append(config["qa_diff_col"])
         if config["qa_mean_col"] in infodump.columns:
             cols_to_add.append(config["qa_mean_col"])
 
         merged = merged.merge(
-            infodump[cols_to_add].drop_duplicates(), on="subject_id", how="left"
+            infodump[cols_to_add].drop_duplicates(),
+            on=["subject_id", "session_id"],
+            how="left",
         )
 
+        if print_diagnostics:
+            print(f"After merging with infodump: {len(merged)} subjects")
+
         # Define columns and labels for correlation matrix
-        columns = ["vol_sp_reldiff", "vol_cp_reldiff", "snr_diff"]
-        labels = ["Vol Diff\nSP", "Vol Diff\nCP", "SNR Diff"]
+        columns = ["vol_sp_absdiff", "vol_cp_absdiff", "snr_diff"]
+        labels = ["Vol Diff\nSP (cm³)", "Vol Diff\nCP (cm³)", "SNR Diff"]
 
         if config["qa_diff_col"] in merged.columns:
             columns.append(config["qa_diff_col"])
@@ -1673,6 +1423,14 @@ def plot_correlation_matrices(quality_df, infodump_df):
         # Get complete cases
         corr_data = merged[available_cols].dropna()
 
+        if print_diagnostics:
+            print(f"Complete cases for correlation: {len(corr_data)}")
+            print(f"\n--- Diagnostic Table for {pair_name} ---")
+            display_df = merged[["subject_id", "session_id"] + available_cols].copy()
+            display_df = display_df.round(3)
+            print(display_df.to_string(index=False))
+            print()
+
         if len(corr_data) < 3:
             ax.text(
                 0.5,
@@ -1689,21 +1447,47 @@ def plot_correlation_matrices(quality_df, infodump_df):
         # Compute correlation matrix
         corr_matrix = corr_data.corr(method="pearson")
 
-        # Compute p-values
+        # Compute p-values and collect for FDR correction
         n_vars = len(available_cols)
         p_matrix = np.zeros((n_vars, n_vars))
+        p_values_list = []  # For FDR correction
+        p_indices = []  # Track which cells each p-value belongs to
+
         for i in range(n_vars):
             for j in range(n_vars):
                 if i == j:
-                    p_matrix[i, j] = 0
-                else:
+                    p_matrix[i, j] = 1.0  # Diagonal
+                elif i < j:  # Only compute upper triangle
                     _, p = stats.pearsonr(
                         corr_data[available_cols[i]], corr_data[available_cols[j]]
                     )
                     p_matrix[i, j] = p
+                    p_matrix[j, i] = p  # Symmetric
+                    p_values_list.append(p)
+                    p_indices.append((i, j))
+
+        # Apply FDR correction (Benjamini-Hochberg)
+        if len(p_values_list) > 0:
+            _, p_corrected, _, _ = multipletests(p_values_list, method="fdr_bh")
+
+            # Create corrected p-value matrix
+            p_corrected_matrix = np.ones((n_vars, n_vars))
+            for idx, (i, j) in enumerate(p_indices):
+                p_corrected_matrix[i, j] = p_corrected[idx]
+                p_corrected_matrix[j, i] = p_corrected[idx]
+        else:
+            p_corrected_matrix = p_matrix.copy()
+
+        if print_diagnostics:
+            print(f"--- Raw p-values (upper triangle) ---")
+            for idx, (i, j) in enumerate(p_indices):
+                print(
+                    f"  {available_labels[i]} vs {available_labels[j]}: p={p_values_list[idx]:.4f} -> FDR corrected: {p_corrected[idx]:.4f}"
+                )
+            print()
 
         # Plot heatmap
-        im = ax.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+        im = ax.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="equal")
 
         # Set ticks
         ax.set_xticks(range(len(available_labels)))
@@ -1711,19 +1495,19 @@ def plot_correlation_matrices(quality_df, infodump_df):
         ax.set_xticklabels(available_labels, fontsize=10)
         ax.set_yticklabels(available_labels, fontsize=10)
 
-        # Add correlation values and significance stars
+        # Add correlation values and significance stars (using FDR-corrected p-values)
         for i in range(n_vars):
             for j in range(n_vars):
                 r = corr_matrix.iloc[i, j]
-                p = p_matrix[i, j]
+                p_corr = p_corrected_matrix[i, j]
 
-                # Significance stars
+                # Significance stars based on FDR-corrected p-values
                 if i != j:
-                    if p < 0.001:
+                    if p_corr < 0.001:
                         sig = "***"
-                    elif p < 0.01:
+                    elif p_corr < 0.01:
                         sig = "**"
-                    elif p < 0.05:
+                    elif p_corr < 0.05:
                         sig = "*"
                     else:
                         sig = ""
@@ -1746,27 +1530,64 @@ def plot_correlation_matrices(quality_df, infodump_df):
             f"{pair_name} (N={len(corr_data)})", fontsize=14, fontweight="bold"
         )
 
-    # Add shared colorbar
-    cbar = fig.colorbar(im, ax=axes, fraction=0.046, pad=0.04, shrink=0.8)
+    # Add colorbar manually to avoid tight_layout issues
+    cbar = fig.colorbar(
+        im, ax=axes.ravel().tolist(), fraction=0.046, pad=0.04, shrink=0.8
+    )
     cbar.set_label("Pearson Correlation (r)", fontsize=11)
 
     plt.suptitle(
-        "Correlation Matrices: Independent Split Pairs (Native Volumes)\n* p<0.05, ** p<0.01, *** p<0.001",
+        "Correlation Matrices: Independent Split Pairs (Absolute Volume Diff)\n* p<0.05, ** p<0.01, *** p<0.001 (FDR corrected)",
         fontsize=14,
         fontweight="bold",
         y=1.02,
     )
-    plt.tight_layout(rect=[0, 0, 0.85, 1])
+
+    # Use constrained_layout or manual adjustment instead of tight_layout
+    fig.subplots_adjust(left=0.08, right=0.85, top=0.88, bottom=0.08, wspace=0.3)
+
     return fig
 
 
-fig = plot_correlation_matrices(quality_df, infodump_df)
+fig = plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True)
 plt.show()
 
 
 # In[ ]:
 
 
+# Check if S3-S4 has systematically different quality
+print("S1-S2 QA mean:", infodump_df["QA12_mean"].mean())
+print("S3-S4 QA mean:", infodump_df["QA34_mean"].mean())
+print(
+    "\nS1-S2 QA diff mean:",
+    (
+        infodump_df["qa_diff_S1S2"].mean()
+        if "qa_diff_S1S2" in infodump_df.columns
+        else abs(infodump_df["QA_S1"] - infodump_df["QA_S2"]).mean()
+    ),
+)
+print(
+    "S3-S4 QA diff mean:",
+    (
+        infodump_df["qa_diff_S3S4"].mean()
+        if "qa_diff_S3S4" in infodump_df.columns
+        else abs(infodump_df["QA_S3"] - infodump_df["QA_S4"]).mean()
+    ),
+)
+
+# # TODO: Finish t his plot
+# def plot_per_subject_cross_split_abs_QA(infodump_df):
+
+#     fig, ax = plt.subplots(figsize=(14, 8))
+
+#     x = np.arange(len())
+
+
+# In[12]:
+
+
+## IRRELEVANT: PLEASE IGNORE TODO: rEMOVE LATER
 def statistical_model_comparison(df):
     """Perform statistical tests comparing models."""
     print("\n" + "=" * 80)
@@ -1808,7 +1629,7 @@ def statistical_model_comparison(df):
 statistical_model_comparison(reliability_df)
 
 
-# In[ ]:
+# In[41]:
 
 
 def print_final_summary(reliability_df, quality_df, infodump_df):
