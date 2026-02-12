@@ -11,7 +11,7 @@
 # 
 # 
 
-# In[3]:
+# In[2]:
 
 
 import pandas as pd
@@ -28,8 +28,10 @@ infodump_df = pd.read_csv("../data/raw_subject_data.csv")
 
 subjects_df = pd.read_csv("../data/subject.csv")
 
+split_pair_diffs = pd.read_csv("../data/split_comparision_data.csv")
 
-# In[4]:
+
+# In[3]:
 
 
 # Cell 1a Data access functions (LEAVE COLLAPSED)
@@ -154,7 +156,7 @@ def get_available_splits(quality_df):
     return sorted(quality_df["split"].unique())
 
 
-# In[5]:
+# In[4]:
 
 
 # Cell 1b Summary
@@ -178,7 +180,7 @@ print(f"\nSubjects columns :")
 print(f"  {subjects_df.columns.tolist()}")
 
 
-# In[6]:
+# In[5]:
 
 
 # 1c. GA Distribution: Scatter Plot and Bar Plot Side by Side
@@ -379,219 +381,205 @@ fig = plot_ga_distribution(quality_df)
 plt.show()
 
 
-# In[13]:
+# In[15]:
 
 
-# === Interactive Plot: Volume Difference vs GA with Polynomial Fits ===
-
-import plotly.graph_objects as go
-import plotly.express as px
-from itertools import combinations
-
-def plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue='total'):
+# SCATTER PLOT: Volume Difference vs GA (Absolute & Relative, Side by Side)
+def plot_abs_and_rel_diff_vs_ga(
+    split_pair_diffs, tissue="total", labels=True, show_regression=True
+):
     """
-    Interactive plot showing absolute volume difference between splits vs GA.
-    Each subject-session gets polynomial regression lines for their split-pair differences.
-
-    Parameters:
-    -----------
-    subjects_df : pd.DataFrame
-    quality_df : pd.DataFrame
-    tissue : str
-        'total', 'sp', 'cp', or 'inner'
+    Side-by-side scatter plots: absolute and relative volume difference vs GA.
     """
-    # Prepare data
-    subjects_df = subjects_df.copy()
-    subjects_df['subject_id'] = subjects_df['subject_id'].astype(str)
-    subjects_df['session_id'] = subjects_df['session_id'].astype(str)
-    subjects_df['unique_id'] = subjects_df['subject_id'] + '_' + subjects_df['session_id']
+    from sklearn.linear_model import RANSACRegressor, LinearRegression
 
-    quality_df = quality_df.copy()
-    quality_df['subject_id'] = quality_df['subject_id'].astype(str)
-    quality_df['session_id'] = quality_df['session_id'].astype(str)
-    quality_df['unique_id'] = quality_df['subject_id'] + '_' + quality_df['session_id']
+    tissue_names = {
+        "total": "Total Brain",
+        "sp": "Subplate",
+        "cp": "Cortical Plate",
+        "inner": "Inner",
+    }
 
-    # Compute total native volume
-    quality_df['total_native_vol'] = (
-        quality_df['native_vol_sp'] + 
-        quality_df['native_vol_cp'] + 
-        quality_df['native_vol_inner']
-    )
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    colors = {"S1-S2": "#e74c3c", "S3-S4": "#3498db"}
 
-    # Select volume column based on tissue
-    vol_col = {
-        'total': 'total_native_vol',
-        'sp': 'native_vol_sp',
-        'cp': 'native_vol_cp',
-        'inner': 'native_vol_inner'
-    }[tissue]
+    configs = [
+        (axes[0], f"abs_diff_{tissue}", "cm³", 1000, "Absolute"),
+        (axes[1], f"rel_diff_{tissue}", "%", 1, "Relative"),
+    ]
 
-    tissue_name = {
-        'total': 'Total Brain',
-        'sp': 'Subplate',
-        'cp': 'Cortical Plate',
-        'inner': 'Inner'
-    }[tissue]
+    for ax, col, unit, scale, diff_type in configs:
+        # Collect points per split pair for regression
+        regression_data = {"S1-S2": {"ga": [], "y": []}, "S3-S4": {"ga": [], "y": []}}
 
-    # Merge GA
-    quality_merged = quality_df.merge(
-        subjects_df[['subject_id', 'session_id', 'unique_id']],
-        on=['subject_id', 'session_id', 'unique_id'],
-        how='left'
-    )
-
-    # Compute pairwise absolute differences for each subject-session
-    split_pairs = list(combinations(['S1', 'S2', 'S3', 'S4'], 2))
-
-    diff_records = []
-    for unique_id in quality_merged['unique_id'].unique():
-        subj_data = quality_merged[quality_merged['unique_id'] == unique_id]
-        ga = subj_data['GA'].iloc[0]
-
-        if pd.isna(ga):
-            continue
-
-        for split1, split2 in split_pairs:
-            vol1_row = subj_data[subj_data['split'] == split1]
-            vol2_row = subj_data[subj_data['split'] == split2]
-
-            if len(vol1_row) == 0 or len(vol2_row) == 0:
+        for (subj, sess), group in split_pair_diffs.groupby(
+            ["subject_id", "session_id"]
+        ):
+            if len(group) < 2:
                 continue
 
-            vol1 = vol1_row[vol_col].values[0]
-            vol2 = vol2_row[vol_col].values[0]
+            ga = group["GA"].iloc[0]
+            s12 = group[group["split_pair"] == "S1-S2"]
+            s34 = group[group["split_pair"] == "S3-S4"]
 
-            if pd.isna(vol1) or pd.isna(vol2):
+            if len(s12) == 0 or len(s34) == 0:
                 continue
 
-            abs_diff = abs(vol1 - vol2)
-            mean_vol = (vol1 + vol2) / 2
-            rel_diff = abs_diff / mean_vol * 100 if mean_vol > 0 else 0
+            y12 = s12[col].values[0] / scale
+            y34 = s34[col].values[0] / scale
 
-            diff_records.append({
-                'unique_id': unique_id,
-                'subject_id': subj_data['subject_id'].iloc[0],
-                'session_id': subj_data['session_id'].iloc[0],
-                'GA': ga,
-                'split_pair': f'{split1}-{split2}',
-                'abs_diff': abs_diff,
-                'rel_diff': rel_diff,
-                'mean_vol': mean_vol
-            })
+            regression_data["S1-S2"]["ga"].append(ga)
+            regression_data["S1-S2"]["y"].append(y12)
+            regression_data["S3-S4"]["ga"].append(ga)
+            regression_data["S3-S4"]["y"].append(y34)
 
-    diff_df = pd.DataFrame(diff_records)
+            # Connect with gray line
+            ax.plot(
+                [ga, ga], [y12, y34], color="gray", alpha=0.4, linewidth=1, zorder=1
+            )
 
-    # Create interactive plot
-    fig = go.Figure()
+            # Plot points
+            ax.scatter(
+                ga,
+                y12,
+                c=colors["S1-S2"],
+                s=80,
+                alpha=0.8,
+                edgecolors="black",
+                linewidths=0.5,
+                zorder=2,
+            )
+            ax.scatter(
+                ga,
+                y34,
+                c=colors["S3-S4"],
+                s=80,
+                alpha=0.8,
+                edgecolors="black",
+                linewidths=0.5,
+                zorder=2,
+            )
 
-    # Color palette for subjects
-    unique_subjects = diff_df['unique_id'].unique()
-    colors = px.colors.qualitative.Dark24 + px.colors.qualitative.Light24
-    color_map = {subj: colors[i % len(colors)] for i, subj in enumerate(unique_subjects)}
+            if labels:
+                y_mid = (y12 + y34) / 2
+                ax.text(
+                    ga + 0.15, y_mid, str(subj)[:6], fontsize=7, alpha=0.6, va="center"
+                )
 
-    # Plot each subject's data points
-    for unique_id in unique_subjects:
-        subj_data = diff_df[diff_df['unique_id'] == unique_id]
-        color = color_map[unique_id]
+        # RANSAC regression per split pair
+        if show_regression:
+            for pair_name in ["S1-S2", "S3-S4"]:
+                ga_arr = np.array(regression_data[pair_name]["ga"])
+                y_arr = np.array(regression_data[pair_name]["y"])
 
-        # Add scatter points for all split pairs
-        fig.add_trace(go.Scatter(
-            x=subj_data['GA'],
-            y=subj_data['abs_diff'],
-            mode='markers',
-            marker=dict(size=10, color=color, opacity=0.7, line=dict(width=1, color='black')),
-            name=unique_id,
-            text=[f"Subject: {row['unique_id']}<br>Split Pair: {row['split_pair']}<br>Abs Diff: {row['abs_diff']:.1f} mm³<br>Rel Diff: {row['rel_diff']:.1f}%" 
-                  for _, row in subj_data.iterrows()],
-            hoverinfo='text',
-            legendgroup=unique_id,
-            showlegend=True
-        ))
+                if len(ga_arr) < 4:
+                    continue
 
-        # Connect points for same subject with a vertical line (showing spread)
-        ga_val = subj_data['GA'].iloc[0]
-        min_diff = subj_data['abs_diff'].min()
-        max_diff = subj_data['abs_diff'].max()
+                X = ga_arr.reshape(-1, 1)
 
-        fig.add_trace(go.Scatter(
-            x=[ga_val, ga_val],
-            y=[min_diff, max_diff],
-            mode='lines',
-            line=dict(color=color, width=2, dash='solid'),
-            legendgroup=unique_id,
-            showlegend=False,
-            hoverinfo='skip'
-        ))
+                ransac = RANSACRegressor(
+                    residual_threshold=np.std(y_arr),
+                    min_samples=0.7,
+                    random_state=42,
+                )
+                ransac.fit(X, y_arr)
 
-    # Fit polynomial regression across ALL data points
-    # This shows the overall trend of how volume differences scale with GA
-    all_ga = diff_df['GA'].values
-    all_diff = diff_df['abs_diff'].values
+                x_line = np.linspace(ga_arr.min(), ga_arr.max(), 100).reshape(-1, 1)
+                y_line = ransac.predict(x_line)
 
-    # Fit 2nd degree polynomial
-    z = np.polyfit(all_ga, all_diff, 2)
-    p = np.poly1d(z)
+                ax.plot(
+                    x_line,
+                    y_line,
+                    color=colors[pair_name],
+                    linestyle="--",
+                    linewidth=2,
+                    alpha=0.7,
+                    zorder=4,
+                )
 
-    ga_range = np.linspace(all_ga.min(), all_ga.max(), 100)
+                inlier_mask = ransac.inlier_mask_
+                n_in = np.sum(inlier_mask)
+                n_out = np.sum(~inlier_mask)
 
-    fig.add_trace(go.Scatter(
-        x=ga_range,
-        y=p(ga_range),
-        mode='lines',
-        line=dict(color='red', width=3, dash='dash'),
-        name=f'Polynomial Fit (degree=2)',
-        hoverinfo='skip'
-    ))
+                # Highlight outliers with hollow markers
+                if n_out > 0:
+                    ax.scatter(
+                        ga_arr[~inlier_mask],
+                        y_arr[~inlier_mask],
+                        s=80,
+                        facecolors="none",
+                        edgecolors=colors[pair_name],
+                        linewidths=2,
+                        zorder=5,
+                    )
 
-    # Add confidence bands (using residuals)
-    residuals = all_diff - p(all_ga)
-    std_resid = np.std(residuals)
+                # Annotate counts
+                y_pos = y_line[-1]
+                ax.annotate(
+                    f"{pair_name}: {n_in}in/{n_out}out",
+                    xy=(x_line[-1, 0], y_pos),
+                    fontsize=7,
+                    alpha=0.8,
+                    color=colors[pair_name],
+                    va="bottom",
+                    xytext=(5, 3),
+                    textcoords="offset points",
+                )
 
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([ga_range, ga_range[::-1]]),
-        y=np.concatenate([p(ga_range) + 2*std_resid, (p(ga_range) - 2*std_resid)[::-1]]),
-        fill='toself',
-        fillcolor='rgba(255, 0, 0, 0.1)',
-        line=dict(color='rgba(255,0,0,0)'),
-        name='95% CI',
-        hoverinfo='skip'
-    ))
+        # Legend
+        handles = []
+        handles.append(
+            ax.scatter(
+                [], [], c=colors["S1-S2"], s=80, label="S1-S2", edgecolors="black"
+            )
+        )
+        handles.append(
+            ax.scatter(
+                [], [], c=colors["S3-S4"], s=80, label="S3-S4", edgecolors="black"
+            )
+        )
+        if show_regression:
+            from matplotlib.lines import Line2D
 
-    # Calculate correlation
-    r, p_val = stats.pearsonr(all_ga, all_diff)
+            handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    color="gray",
+                    linestyle="--",
+                    linewidth=2,
+                    label="RANSAC fit",
+                )
+            )
+        ax.legend(title="Split Pair", loc="upper left", fontsize=10)
 
-    fig.update_layout(
-        title=dict(
-            text=f'{tissue_name} Volume: Absolute Difference Between Splits vs GA<br>' +
-                 f'<sub>r = {r:.3f}, p = {p_val:.3f}, N = {len(unique_subjects)} subject-sessions</sub>',
-            font=dict(size=16)
-        ),
-        xaxis_title='Gestational Age (weeks)',
-        yaxis_title='Absolute Volume Difference (mm³)',
-        hovermode='closest',
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=1.02,
-            font=dict(size=9)
-        ),
-        width=1100,
-        height=700
+        ax.set_xlabel("Gestational Age (weeks)", fontsize=12)
+        ax.set_ylabel(f"{diff_type} Volume Difference ({unit})", fontsize=12)
+        ax.set_title(f"{diff_type} Difference", fontsize=13, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+
+    plt.suptitle(
+        f"{tissue_names[tissue]}: Volume Difference vs GA\n(Lines connect same subject)",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
     )
-
+    plt.tight_layout()
     return fig
 
-# Run both versions
-subjects_df = pd.read_csv("../data/subject.csv")
-quality_df = pd.read_csv("../data/image_quality_metrics.csv")
 
-# Interactive version
-fig_interactive = plot_volume_diff_vs_ga_interactive(subjects_df, quality_df, tissue='total')
-fig_interactive.show()
+# --- Run ---
+fig = plot_abs_and_rel_diff_vs_ga(split_pair_diffs, tissue="total")
+plt.show()
+
+fig = plot_abs_and_rel_diff_vs_ga(split_pair_diffs, tissue="sp")
+plt.show()
+
+fig = plot_abs_and_rel_diff_vs_ga(split_pair_diffs, tissue="cp")
+plt.show()
 
 
-# In[14]:
+# In[ ]:
 
 
 # 2a: Dice per model
@@ -660,7 +648,7 @@ fig = plot_dice_by_model(reliability_df)
 plt.show()
 
 
-# In[6]:
+# In[ ]:
 
 
 # 2a: relative diff per model (TODO: Change this to absolute difference CHECK NOTES)
@@ -699,7 +687,7 @@ fig = plot_relative_diff_by_model(reliability_df)
 plt.show()
 
 
-# In[7]:
+# In[ ]:
 
 
 # 2a: Abs native volume diference across splits (subjects connected) TODO: Add subject identifier
@@ -858,7 +846,7 @@ fig2 = plot_native_volume_by_split(quality_df, colors)
 plt.show()
 
 
-# In[26]:
+# In[ ]:
 
 
 # VOLUME BAR PLOT COMPARISON PER SPLIT (GROUPED)
@@ -1051,7 +1039,7 @@ fig = plot_per_subject_voxel_counts(quality_df, tissue="inner")
 plt.show()
 
 
-# In[8]:
+# In[ ]:
 
 
 # SNR PLOT
@@ -1260,7 +1248,7 @@ fig = plot_snr_volume_correlation(quality_df, split_pair=("S3", "S4"))
 plt.show()
 
 
-# In[11]:
+# In[ ]:
 
 
 # === CELL 9: Correlation Matrix Heatmaps (S1-S2 and S3-S4) ===
@@ -1280,6 +1268,8 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
 
     Uses long-format quality_df and computes differences on the fly.
     P-values are corrected for multiple comparisons using FDR (Benjamini-Hochberg).
+
+    Diagonal cells show mean ± SD for each variable instead of r=1.00.
     """
     # Prepare infodump data
     infodump = infodump_df.copy()
@@ -1429,6 +1419,12 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
             display_df = merged[["subject_id", "session_id"] + available_cols].copy()
             display_df = display_df.round(3)
             print(display_df.to_string(index=False))
+
+            # Print descriptive statistics
+            print(f"\n--- Descriptive Statistics for {pair_name} ---")
+            desc_stats = corr_data.describe().T[["mean", "std", "min", "max"]]
+            desc_stats.index = available_labels
+            print(desc_stats.round(3).to_string())
             print()
 
         if len(corr_data) < 3:
@@ -1446,6 +1442,10 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
 
         # Compute correlation matrix
         corr_matrix = corr_data.corr(method="pearson")
+
+        # Compute mean and std for each variable (for diagonal display)
+        var_means = corr_data.mean()
+        var_stds = corr_data.std()
 
         # Compute p-values and collect for FDR correction
         n_vars = len(available_cols)
@@ -1496,13 +1496,39 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
         ax.set_yticklabels(available_labels, fontsize=10)
 
         # Add correlation values and significance stars (using FDR-corrected p-values)
+        # Diagonal cells show mean ± SD instead of r=1.00
         for i in range(n_vars):
             for j in range(n_vars):
-                r = corr_matrix.iloc[i, j]
-                p_corr = p_corrected_matrix[i, j]
+                if i == j:
+                    # Diagonal: show mean ± SD
+                    mean_val = var_means[available_cols[i]]
+                    std_val = var_stds[available_cols[i]]
 
-                # Significance stars based on FDR-corrected p-values
-                if i != j:
+                    # Format based on magnitude (avoid overly long numbers)
+                    if abs(mean_val) >= 100:
+                        text = f"μ={mean_val:.0f}\nσ={std_val:.0f}"
+                    elif abs(mean_val) >= 10:
+                        text = f"μ={mean_val:.1f}\nσ={std_val:.1f}"
+                    else:
+                        text = f"μ={mean_val:.2f}\nσ={std_val:.2f}"
+
+                    # Diagonal is white (r=1), so use black text
+                    ax.text(
+                        j,
+                        i,
+                        text,
+                        ha="center",
+                        va="center",
+                        color="white",
+                        fontsize=9,
+                        fontweight="bold",
+                    )
+                else:
+                    # Off-diagonal: show correlation and significance
+                    r = corr_matrix.iloc[i, j]
+                    p_corr = p_corrected_matrix[i, j]
+
+                    # Significance stars based on FDR-corrected p-values
                     if p_corr < 0.001:
                         sig = "***"
                     elif p_corr < 0.01:
@@ -1511,20 +1537,18 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
                         sig = "*"
                     else:
                         sig = ""
-                else:
-                    sig = ""
 
-                text_color = "white" if abs(r) > 0.5 else "black"
-                ax.text(
-                    j,
-                    i,
-                    f"{r:.2f}\n{sig}",
-                    ha="center",
-                    va="center",
-                    color=text_color,
-                    fontsize=11,
-                    fontweight="bold",
-                )
+                    text_color = "white" if abs(r) > 0.5 else "black"
+                    ax.text(
+                        j,
+                        i,
+                        f"{r:.2f}\n{sig}",
+                        ha="center",
+                        va="center",
+                        color=text_color,
+                        fontsize=11,
+                        fontweight="bold",
+                    )
 
         ax.set_title(
             f"{pair_name} (N={len(corr_data)})", fontsize=14, fontweight="bold"
@@ -1537,7 +1561,8 @@ def plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True):
     cbar.set_label("Pearson Correlation (r)", fontsize=11)
 
     plt.suptitle(
-        "Correlation Matrices: Independent Split Pairs (Absolute Volume Diff)\n* p<0.05, ** p<0.01, *** p<0.001 (FDR corrected)",
+        "Correlation Matrices: Independent Split Pairs (Absolute Volume Diff)\n"
+        "Diagonal: μ=mean, σ=SD | Off-diagonal: * p<0.05, ** p<0.01, *** p<0.001 (FDR corrected)",
         fontsize=14,
         fontweight="bold",
         y=1.02,
@@ -1553,83 +1578,1069 @@ fig = plot_correlation_matrices(quality_df, infodump_df, print_diagnostics=True)
 plt.show()
 
 
-# In[ ]:
+# # MULTIVARIATE REGRESSION ANALYSIS
+
+# In[44]:
 
 
-# Check if S3-S4 has systematically different quality
-print("S1-S2 QA mean:", infodump_df["QA12_mean"].mean())
-print("S3-S4 QA mean:", infodump_df["QA34_mean"].mean())
-print(
-    "\nS1-S2 QA diff mean:",
-    (
-        infodump_df["qa_diff_S1S2"].mean()
-        if "qa_diff_S1S2" in infodump_df.columns
-        else abs(infodump_df["QA_S1"] - infodump_df["QA_S2"]).mean()
-    ),
-)
-print(
-    "S3-S4 QA diff mean:",
-    (
-        infodump_df["qa_diff_S3S4"].mean()
-        if "qa_diff_S3S4" in infodump_df.columns
-        else abs(infodump_df["QA_S3"] - infodump_df["QA_S4"]).mean()
-    ),
-)
+# Multivariate Analysis - Volume Difference Predictors
 
-# # TODO: Finish t his plot
-# def plot_per_subject_cross_split_abs_QA(infodump_df):
-
-#     fig, ax = plt.subplots(figsize=(14, 8))
-
-#     x = np.arange(len())
+# Model: Vol_diff ~ GA + SNR_diff + QA_diff + stack_count
+#
+# Run 4 models:
+#   1. SP, S1-S2
+#   2. SP, S3-S4
+#   3. CP, S1-S2
+#   4. CP, S3-S4
+# =============================================================================
 
 
-# In[12]:
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+# Load split comparison data (has volume differences already computed)
+split_comp_df = pd.read_csv("../data/split_comparision_data.csv")
 
 
-## IRRELEVANT: PLEASE IGNORE TODO: rEMOVE LATER
-def statistical_model_comparison(df):
-    """Perform statistical tests comparing models."""
-    print("\n" + "=" * 80)
-    print("STATISTICAL COMPARISON BETWEEN MODELS")
-    print("=" * 80)
+def prepare_multivariate_data(quality_df, infodump_df, split_comp_df, split_pair):
+    """
+    Prepare merged dataset for multivariate regression.
 
-    comparisons = [
-        ("SP Model - Subplate", "SP Model - Cortical Plate"),
-        ("SP Model - Subplate", "5-Label Model - Cortical Plate"),
-        ("SP Model - Cortical Plate", "5-Label Model - Cortical Plate"),
+    Parameters:
+    -----------
+    quality_df : pd.DataFrame
+        Image quality metrics (SNR per split)
+    infodump_df : pd.DataFrame
+        Raw subject data (stack_count, QA values)
+    split_comp_df : pd.DataFrame
+        Split comparison data (volume differences)
+    split_pair : str
+        'S1-S2' or 'S3-S4'
+
+    Returns:
+    --------
+    pd.DataFrame with columns: vol_diff_sp, vol_diff_cp, GA, snr_diff, qa_diff, stack_count
+    """
+    # Filter split comparison data for this pair
+    comp_data = split_comp_df[split_comp_df["split_pair"] == split_pair].copy()
+    comp_data["subject_id"] = comp_data["subject_id"].astype(str)
+    comp_data["session_id"] = comp_data["session_id"].astype(str)
+
+    # Get the two splits
+    if split_pair == "S1-S2":
+        split1, split2 = "S1", "S2"
+        qa_diff_col = "qa_diff_S1S2"
+        qa1_col, qa2_col = "QA_S1", "QA_S2"
+    else:
+        split1, split2 = "S3", "S4"
+        qa_diff_col = "qa_diff_S3S4"
+        qa1_col, qa2_col = "QA_S3", "QA_S4"
+
+    # Compute SNR differences from quality_df
+    quality_df = quality_df.copy()
+    quality_df["subject_id"] = quality_df["subject_id"].astype(str)
+    quality_df["session_id"] = quality_df["session_id"].astype(str)
+
+    # Get SNR for each split
+    snr_s1 = quality_df[quality_df["split"] == split1][
+        ["subject_id", "session_id", "snr_subplate", "snr_cortical_plate"]
+    ].copy()
+    snr_s1 = snr_s1.rename(
+        columns={"snr_subplate": "snr_sp_1", "snr_cortical_plate": "snr_cp_1"}
+    )
+
+    snr_s2 = quality_df[quality_df["split"] == split2][
+        ["subject_id", "session_id", "snr_subplate", "snr_cortical_plate"]
+    ].copy()
+    snr_s2 = snr_s2.rename(
+        columns={"snr_subplate": "snr_sp_2", "snr_cortical_plate": "snr_cp_2"}
+    )
+
+    # Merge SNR data
+    snr_merged = snr_s1.merge(snr_s2, on=["subject_id", "session_id"], how="inner")
+    snr_merged["snr_diff_sp"] = abs(snr_merged["snr_sp_1"] - snr_merged["snr_sp_2"])
+    snr_merged["snr_diff_cp"] = abs(snr_merged["snr_cp_1"] - snr_merged["snr_cp_2"])
+
+    # Prepare infodump data
+    infodump = infodump_df.copy()
+    infodump["subject_id"] = infodump["subject_id"].astype(str)
+    infodump["session_id"] = infodump["session_id"].astype(str)
+
+    # Compute QA difference
+    infodump[qa_diff_col] = abs(infodump[qa1_col] - infodump[qa2_col])
+
+    # Merge everything
+    merged = comp_data.merge(
+        snr_merged[["subject_id", "session_id", "snr_diff_sp", "snr_diff_cp"]],
+        on=["subject_id", "session_id"],
+        how="inner",
+    )
+
+    merged = merged.merge(
+        infodump[["subject_id", "session_id", "stack_count", qa_diff_col]],
+        on=["subject_id", "session_id"],
+        how="inner",
+    )
+
+    # Rename for clarity
+    merged = merged.rename(
+        columns={
+            "abs_diff_sp": "vol_diff_sp",
+            "abs_diff_cp": "vol_diff_cp",
+            qa_diff_col: "qa_diff",
+        }
+    )
+
+    # Convert volume from mm³ to cm³
+    merged["vol_diff_sp"] = merged["vol_diff_sp"] / 1000
+    merged["vol_diff_cp"] = merged["vol_diff_cp"] / 1000
+
+    return merged
+
+
+def compute_vif(X):
+    """Compute Variance Inflation Factor for each predictor."""
+    vif_data = pd.DataFrame()
+    vif_data["Variable"] = X.columns
+    vif_data["VIF"] = [
+        variance_inflation_factor(X.values, i) for i in range(X.shape[1])
     ]
+    return vif_data
 
-    print("\nPairwise Wilcoxon signed-rank tests on Dice scores:")
-    print("-" * 60)
 
-    for model_a, model_b in comparisons:
-        df_a = df[df["model"] == model_a].groupby("subject_id")["dice"].mean()
-        df_b = df[df["model"] == model_b].groupby("subject_id")["dice"].mean()
+def run_multivariate_model(df, tissue, split_pair, print_results=True):
+    """
+    Run OLS regression: vol_diff ~ GA + snr_diff + qa_diff + stack_count
 
-        common_subjects = df_a.index.intersection(df_b.index)
-        data_a = df_a.loc[common_subjects].values
-        data_b = df_b.loc[common_subjects].values
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Prepared data from prepare_multivariate_data()
+    tissue : str
+        'sp' or 'cp'
+    split_pair : str
+        'S1-S2' or 'S3-S4'
+    print_results : bool
+        Whether to print detailed results
 
-        stat, p_value = stats.wilcoxon(data_a, data_b)
-        mean_diff = np.mean(data_a) - np.mean(data_b)
+    Returns:
+    --------
+    dict with model results
+    """
+    # Select appropriate columns
+    vol_col = f"vol_diff_{tissue}"
+    snr_col = f"snr_diff_{tissue}"
 
-        significance = (
-            "***"
-            if p_value < 0.001
-            else "**" if p_value < 0.01 else "*" if p_value < 0.05 else "ns"
+    # Create analysis dataframe
+    analysis_df = df[["GA", snr_col, "qa_diff", "stack_count", vol_col]].dropna().copy()
+    analysis_df = analysis_df.rename(columns={snr_col: "snr_diff", vol_col: "vol_diff"})
+
+    n = len(analysis_df)
+
+    if n < 10:
+        print(f"WARNING: Only {n} complete cases for {tissue.upper()} {split_pair}")
+        return None
+
+    # Fit full model
+    formula = "vol_diff ~ GA + snr_diff + qa_diff + stack_count"
+    model = smf.ols(formula, data=analysis_df).fit()
+
+    # Compute VIF for collinearity check
+    X = analysis_df[["GA", "snr_diff", "qa_diff", "stack_count"]]
+    vif_df = compute_vif(X)
+
+    if print_results:
+        print(f"\n{'='*70}")
+        print(
+            f"MULTIVARIATE REGRESSION: {tissue.upper()} Volume Difference ({split_pair})"
+        )
+        print(f"{'='*70}")
+        print(f"N = {n} subjects")
+        print(f"\nFormula: vol_diff ~ GA + snr_diff + qa_diff + stack_count")
+        print(f"\n{'-'*70}")
+        print("MODEL SUMMARY")
+        print(f"{'-'*70}")
+        print(f"R-squared:          {model.rsquared:.4f}")
+        print(f"Adjusted R-squared: {model.rsquared_adj:.4f}")
+        print(f"F-statistic:        {model.fvalue:.4f}")
+        print(
+            f"F p-value:          {model.f_pvalue:.4f} {'***' if model.f_pvalue < 0.001 else '**' if model.f_pvalue < 0.01 else '*' if model.f_pvalue < 0.05 else ''}"
         )
 
-        print(f"\n{model_a[:25]:25s} vs {model_b[:25]:25s}")
-        print(f"  Mean difference: {mean_diff:+.4f}")
-        print(f"  Wilcoxon p-value: {p_value:.4f} {significance}")
-        print(f"  N subjects: {len(common_subjects)}")
+        print(f"\n{'-'*70}")
+        print("COEFFICIENTS")
+        print(f"{'-'*70}")
+        print(
+            f"{'Variable':<15} {'Coef':>10} {'Std Err':>10} {'t':>8} {'P>|t|':>10} {'Sig':>5}"
+        )
+        print(f"{'-'*70}")
+
+        for var in model.params.index:
+            coef = model.params[var]
+            stderr = model.bse[var]
+            tval = model.tvalues[var]
+            pval = model.pvalues[var]
+            sig = (
+                "***"
+                if pval < 0.001
+                else "**" if pval < 0.01 else "*" if pval < 0.05 else ""
+            )
+            print(
+                f"{var:<15} {coef:>10.4f} {stderr:>10.4f} {tval:>8.3f} {pval:>10.4f} {sig:>5}"
+            )
+
+        print(f"\n{'-'*70}")
+        print("COLLINEARITY CHECK (VIF)")
+        print(f"{'-'*70}")
+        print(
+            "VIF > 5 indicates moderate collinearity, > 10 indicates high collinearity"
+        )
+        for _, row in vif_df.iterrows():
+            flag = " ⚠️" if row["VIF"] > 5 else ""
+            print(f"  {row['Variable']:<15}: {row['VIF']:.2f}{flag}")
+
+    return {
+        "tissue": tissue,
+        "split_pair": split_pair,
+        "n": n,
+        "model": model,
+        "r_squared": model.rsquared,
+        "adj_r_squared": model.rsquared_adj,
+        "f_stat": model.fvalue,
+        "f_pvalue": model.f_pvalue,
+        "coefficients": model.params.to_dict(),
+        "pvalues": model.pvalues.to_dict(),
+        "vif": vif_df,
+    }
 
 
-statistical_model_comparison(reliability_df)
+def compare_models(results_list):
+    """
+    Create comparison table across all 4 models.
+    """
+    print(f"\n{'='*80}")
+    print("MODEL COMPARISON SUMMARY")
+    print(f"{'='*80}")
+
+    # Header
+    print(f"\n{'Model':<20} {'N':>5} {'R²':>8} {'Adj R²':>8} {'F':>8} {'F p-val':>10}")
+    print(f"{'-'*80}")
+
+    for r in results_list:
+        if r is not None:
+            label = f"{r['tissue'].upper()} ({r['split_pair']})"
+            sig = (
+                "***"
+                if r["f_pvalue"] < 0.001
+                else (
+                    "**"
+                    if r["f_pvalue"] < 0.01
+                    else "*" if r["f_pvalue"] < 0.05 else ""
+                )
+            )
+            print(
+                f"{label:<20} {r['n']:>5} {r['r_squared']:>8.4f} {r['adj_r_squared']:>8.4f} {r['f_stat']:>8.2f} {r['f_pvalue']:>9.4f}{sig}"
+            )
+
+    # Coefficient comparison
+    print(f"\n{'-'*80}")
+    print("COEFFICIENT COMPARISON (significance: * p<0.05, ** p<0.01, *** p<0.001)")
+    print(f"{'-'*80}")
+
+    variables = ["Intercept", "GA", "snr_diff", "qa_diff", "stack_count"]
+
+    print(f"\n{'Variable':<15}", end="")
+    for r in results_list:
+        if r is not None:
+            label = f"{r['tissue'].upper()}_{r['split_pair'][:2]}"
+            print(f"{label:>15}", end="")
+    print()
+    print(f"{'-'*80}")
+
+    for var in variables:
+        print(f"{var:<15}", end="")
+        for r in results_list:
+            if r is not None:
+                coef = r["coefficients"].get(var, np.nan)
+                pval = r["pvalues"].get(var, 1.0)
+                sig = (
+                    "***"
+                    if pval < 0.001
+                    else "**" if pval < 0.01 else "*" if pval < 0.05 else ""
+                )
+                print(f"{coef:>12.3f}{sig:>3}", end="")
+        print()
+
+def plot_universal_results(df, tissue, split_pair, model_result, x_axis_col="GA"):
+    """
+    Universal plotting function for any OLS model.
+
+    Instead of re-predicting (which requires specific column names),
+    this extracts the fitted values and residuals directly from the
+    statsmodels object and aligns them with the original dataframe
+    using the index.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The dataframe containing the 'GA' column and the target volume column.
+    tissue : str
+        'sp' or 'cp'
+    split_pair : str
+        Label for the title (e.g., 'S1-S2')
+    model_result : dict
+        The dictionary returned by your runner functions (must contain 'model')
+    x_axis_col : str
+        The main variable to plot against (default 'GA')
+    """
+    if model_result is None:
+        return None
+
+    model = model_result["model"]
+    vol_col = f"vol_diff_{tissue}"
+
+    # 1. Get the indices of the data points actually used in the model
+    #    (This automatically accounts for rows dropped due to NaNs in ANY predictor)
+    valid_indices = model.fittedvalues.index
+
+    # 2. Subset the original dataframe to match the model data
+    #    We only strictly need the x_axis_col and the target vol_col here
+    plot_data = df.loc[valid_indices].copy()
+
+    # 3. Add model outputs
+    plot_data["predicted"] = model.fittedvalues
+    plot_data["residuals"] = model.resid
+    plot_data["observed"] = plot_data[vol_col]
+
+    # Visual Setup
+    tissue_name = "Subplate" if tissue == "sp" else "Cortical Plate"
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # --- Plot 1: Actual vs Predicted ---
+    ax1 = axes[0]
+    ax1.scatter(
+        plot_data["observed"],
+        plot_data["predicted"],
+        alpha=0.7,
+        s=60,
+        edgecolors="black",
+    )
+
+    # Perfect prediction line
+    min_val = min(plot_data["observed"].min(), plot_data["predicted"].min())
+    max_val = max(plot_data["observed"].max(), plot_data["predicted"].max())
+    ax1.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect fit")
+
+    ax1.set_xlabel(f"Actual {vol_col} (cm³)", fontsize=11)
+    ax1.set_ylabel("Predicted (cm³)", fontsize=11)
+    ax1.set_title(
+        f"Actual vs Predicted\n$R^2$ = {model.rsquared:.3f}",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # --- Plot 2: Volume Diff vs GA (Observed) ---
+    ax2 = axes[1]
+    ax2.scatter(
+        plot_data[x_axis_col],
+        plot_data["observed"],
+        alpha=0.7,
+        s=60,
+        edgecolors="black",
+        label="Observed Data",
+    )
+
+    # Add a simple linear trend line for visualization (Univariate)
+    # We use numpy polyfit on the valid data
+    if len(plot_data) > 1:
+        z = np.polyfit(plot_data[x_axis_col], plot_data["observed"], 1)
+        p_line = np.poly1d(z)
+        x_range = np.linspace(
+            plot_data[x_axis_col].min(), plot_data[x_axis_col].max(), 100
+        )
+        ax2.plot(
+            x_range, p_line(x_range), "r-", linewidth=2, alpha=0.8, label="Linear Trend"
+        )
+
+        # Correlation
+        r, p = stats.pearsonr(plot_data[x_axis_col], plot_data["observed"])
+        corr_label = f"r = {r:.3f}, p = {p:.3f}"
+    else:
+        corr_label = "Insufficient Data"
+
+    ax2.set_xlabel(f"{x_axis_col} (weeks)", fontsize=11)
+    ax2.set_ylabel("Actual Volume Diff (cm³)", fontsize=11)
+    ax2.set_title(
+        f"Volume Diff vs {x_axis_col}\n{corr_label}", fontsize=12, fontweight="bold"
+    )
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # --- Plot 3: Residuals vs GA ---
+    ax3 = axes[2]
+    ax3.scatter(
+        plot_data[x_axis_col],
+        plot_data["residuals"],
+        alpha=0.7,
+        s=60,
+        edgecolors="black",
+    )
+    ax3.axhline(y=0, color="r", linestyle="--", linewidth=2)
+
+    ax3.set_xlabel(f"{x_axis_col} (weeks)", fontsize=11)
+    ax3.set_ylabel("Residuals (cm³)", fontsize=11)
+    ax3.set_title(f"Residuals vs {x_axis_col}", fontsize=12, fontweight="bold")
+    ax3.grid(True, alpha=0.3)
+
+    # --- Super Title ---
+    # Try to extract the formula from the result dict if it exists, otherwise generic
+    formula_text = model_result.get("formula", "Multivariate Model")
+
+    plt.suptitle(
+        f"{tissue_name} - {split_pair}\n{formula_text}",
+        fontsize=14,
+        fontweight="bold",
+        y=1.05,
+    )
+    plt.tight_layout()
+
+    return fig
 
 
-# In[41]:
+# =============================================================================
+# RUN ANALYSIS
+# =============================================================================
+
+print("=" * 80)
+print("MULTIVARIATE REGRESSION ANALYSIS")
+print("Model: Vol_diff ~ GA + SNR_diff + QA_diff + stack_count")
+print("=" * 80)
+
+# Prepare data for each split pair
+data_S1S2 = prepare_multivariate_data(quality_df, infodump_df, split_comp_df, "S1-S2")
+data_S3S4 = prepare_multivariate_data(quality_df, infodump_df, split_comp_df, "S3-S4")
+
+print(f"\nData prepared:")
+print(f"  S1-S2: {len(data_S1S2)} subjects")
+print(f"  S3-S4: {len(data_S3S4)} subjects")
+
+# Run all 4 models
+results = []
+
+# SP S1-S2
+results.append(run_multivariate_model(data_S1S2, "sp", "S1-S2"))
+
+# SP S3-S4
+results.append(run_multivariate_model(data_S3S4, "sp", "S3-S4"))
+
+# CP S1-S2
+results.append(run_multivariate_model(data_S1S2, "cp", "S1-S2"))
+
+# CP S3-S4
+results.append(run_multivariate_model(data_S3S4, "cp", "S3-S4"))
+
+# Comparison table
+compare_models(results)
+
+# Generate plots
+print(f"\n{'='*80}")
+print("GENERATING VISUALIZATIONS")
+print(f"{'='*80}")
+
+fig1 = plot_universal_results(data_S1S2, "sp", "S1-S2", results[0])
+plt.show()
+
+fig2 = plot_universal_results(data_S3S4, "sp", "S3-S4", results[1])
+plt.show()
+
+fig3 = plot_universal_results(data_S1S2, "cp", "S1-S2", results[2])
+plt.show()
+
+fig4 = plot_universal_results(data_S3S4, "cp", "S3-S4", results[3])
+plt.show()
+
+
+# ##  Residualization of  stack_count against GA
+# 
+# Model: Model: Vol_diff ~ GA + SNR_diff + QA_diff + stack_count_resid
+
+# In[45]:
+
+
+# HELPER: Residualize a variable against another
+# =============================================================================
+
+def residualize(df, target_col, covariate_col, print_diagnostics=True):
+    """
+    Residualize target_col against covariate_col using OLS regression.
+
+    Returns the residuals of: target ~ covariate
+    i.e., the part of target NOT explained by covariate.
+
+    This is useful for removing collinearity: if A and B are correlated,
+    residualizing B against A gives you the unique variance in B that A
+    doesn't already capture. You can then use A + B_residualized in a model
+    without collinearity issues.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Dataframe containing both columns
+    target_col : str
+        The variable to residualize (e.g., 'stack_count')
+    covariate_col : str
+        The variable to regress out (e.g., 'GA')
+    print_diagnostics : bool
+        Whether to print the regression summary
+
+    Returns:
+    --------
+    pd.Series
+        Residuals (same length as df, NaN where input was NaN)
+
+    Example:
+    --------
+    >>> df['stack_count_resid'] = residualize(df, 'stack_count', 'GA')
+    >>> # Now stack_count_resid is uncorrelated with GA
+    """
+    # Get complete cases
+    mask = df[[target_col, covariate_col]].notna().all(axis=1)
+    clean = df.loc[mask, [target_col, covariate_col]].copy()
+
+    if len(clean) < 3:
+        print(f"WARNING: Only {len(clean)} complete cases for residualization")
+        return pd.Series(np.nan, index=df.index)
+
+    # Fit simple OLS: target ~ covariate
+    model = smf.ols(f"{target_col} ~ {covariate_col}", data=clean).fit()
+
+    if print_diagnostics:
+        r, p = stats.pearsonr(clean[covariate_col], clean[target_col])
+        print(f"Residualizing: {target_col} ~ {covariate_col}")
+        print(f"  Original correlation: r = {r:.3f}, p = {p:.4f}")
+        print(f"  Regression R² = {model.rsquared:.4f}")
+        print(
+            f"  Slope = {model.params[covariate_col]:.4f} (p = {model.pvalues[covariate_col]:.4f})"
+        )
+        print(
+            f"  Interpretation: {model.rsquared*100:.1f}% of {target_col} variance is shared with {covariate_col}"
+        )
+        print(
+            f"  Residuals capture the remaining {(1-model.rsquared)*100:.1f}% unique to {target_col}"
+        )
+
+    # Create output series with NaN for incomplete cases
+    residuals = pd.Series(np.nan, index=df.index)
+    residuals.loc[mask] = model.resid.values
+
+    return residuals
+
+
+# =============================================================================
+# MODEL WITH RESIDUALIZED STACK COUNT
+# =============================================================================
+# Model: Vol_diff ~ GA + SNR_diff + QA_diff + stack_count_resid
+#
+# stack_count_resid = residuals of (stack_count ~ GA)
+# This removes the GA-correlated component from stack_count,
+# keeping only the unique acquisition-specific variance.
+# =============================================================================
+
+
+def prepare_residualized_data(quality_df, infodump_df, split_comp_df, split_pair):
+    """
+    Prepare data with residualized stack_count for multivariate regression.
+    Same as prepare_multivariate_data but adds stack_count_resid.
+    """
+    # Use existing preparation function
+    merged = prepare_multivariate_data(
+        quality_df, infodump_df, split_comp_df, split_pair
+    )
+
+    # Residualize stack_count against GA
+    print(f"\n--- Residualizing stack_count for {split_pair} ---")
+    merged["stack_count_resid"] = residualize(
+        merged, "stack_count", "GA", print_diagnostics=True
+    )
+
+    # Verify collinearity is resolved
+    r_original, _ = stats.pearsonr(
+        merged["GA"].dropna(), merged["stack_count"].dropna()
+    )
+
+    mask = merged[["GA", "stack_count_resid"]].notna().all(axis=1)
+    if mask.sum() >= 3:
+        r_resid, _ = stats.pearsonr(
+            merged.loc[mask, "GA"], merged.loc[mask, "stack_count_resid"]
+        )
+        print(f"  Correlation GA vs stack_count (original):      r = {r_original:.4f}")
+        print(f"  Correlation GA vs stack_count_resid (cleaned):  r = {r_resid:.4f}")
+
+    return merged
+
+
+def run_residualized_model(df, tissue, split_pair, print_results=True):
+    """
+    Run OLS: vol_diff ~ GA + snr_diff + qa_diff + stack_count_resid
+    """
+    vol_col = f"vol_diff_{tissue}"
+    snr_col = f"snr_diff_{tissue}"
+
+    analysis_df = (
+        df[["GA", snr_col, "qa_diff", "stack_count_resid", vol_col]].dropna().copy()
+    )
+    analysis_df = analysis_df.rename(columns={snr_col: "snr_diff", vol_col: "vol_diff"})
+
+    n = len(analysis_df)
+    if n < 10:
+        print(f"WARNING: Only {n} complete cases for {tissue.upper()} {split_pair}")
+        return None
+
+    formula = "vol_diff ~ GA + snr_diff + qa_diff + stack_count_resid"
+    model = smf.ols(formula, data=analysis_df).fit()
+
+    X = analysis_df[["GA", "snr_diff", "qa_diff", "stack_count_resid"]]
+    vif_df = compute_vif(X)
+
+    if print_results:
+        print(f"\n{'='*70}")
+        print(f"RESIDUALIZED MODEL: {tissue.upper()} Volume Difference ({split_pair})")
+        print(f"{'='*70}")
+        print(f"N = {n} subjects")
+        print(f"Formula: vol_diff ~ GA + snr_diff + qa_diff + stack_count_resid")
+        print(f"\n{'-'*70}")
+        print("MODEL SUMMARY")
+        print(f"{'-'*70}")
+        print(f"R-squared:          {model.rsquared:.4f}")
+        print(f"Adjusted R-squared: {model.rsquared_adj:.4f}")
+        print(f"F-statistic:        {model.fvalue:.4f}")
+        print(
+            f"F p-value:          {model.f_pvalue:.4f} {'***' if model.f_pvalue < 0.001 else '**' if model.f_pvalue < 0.01 else '*' if model.f_pvalue < 0.05 else ''}"
+        )
+
+        print(f"\n{'-'*70}")
+        print("COEFFICIENTS")
+        print(f"{'-'*70}")
+        print(
+            f"{'Variable':<20} {'Coef':>10} {'Std Err':>10} {'t':>8} {'P>|t|':>10} {'Sig':>5}"
+        )
+        print(f"{'-'*70}")
+        for var in model.params.index:
+            coef = model.params[var]
+            stderr = model.bse[var]
+            tval = model.tvalues[var]
+            pval = model.pvalues[var]
+            sig = (
+                "***"
+                if pval < 0.001
+                else "**" if pval < 0.01 else "*" if pval < 0.05 else ""
+            )
+            print(
+                f"{var:<20} {coef:>10.4f} {stderr:>10.4f} {tval:>8.3f} {pval:>10.4f} {sig:>5}"
+            )
+
+        print(f"\n{'-'*70}")
+        print("COLLINEARITY CHECK (VIF) - Should be improved vs original model")
+        print(f"{'-'*70}")
+        for _, row in vif_df.iterrows():
+            flag = " ⚠️" if row["VIF"] > 5 else " ✓"
+            print(f"  {row['Variable']:<20}: {row['VIF']:.2f}{flag}")
+
+    return {
+        "tissue": tissue,
+        "split_pair": split_pair,
+        "n": n,
+        "model": model,
+        "model_name": "Residualized",
+        "formula": "Vol_diff ~ GA + SNR_diff + QA_diff + stack_count_resid",
+        "r_squared": model.rsquared,
+        "adj_r_squared": model.rsquared_adj,
+        "f_stat": model.fvalue,
+        "f_pvalue": model.f_pvalue,
+        "coefficients": model.params.to_dict(),
+        "pvalues": model.pvalues.to_dict(),
+        "vif": vif_df,
+    }
+
+
+# =============================================================================
+# RUN RESIDUALIZED MODELS
+# =============================================================================
+
+print("=" * 80)
+print("RESIDUALIZED MODEL: Vol_diff ~ GA + SNR_diff + QA_diff + stack_count_resid")
+print("(stack_count_resid = stack_count with GA component removed)")
+print("=" * 80)
+
+data_resid_S1S2 = prepare_residualized_data(
+    quality_df, infodump_df, split_comp_df, "S1-S2"
+)
+data_resid_S3S4 = prepare_residualized_data(
+    quality_df, infodump_df, split_comp_df, "S3-S4"
+)
+
+results_resid = []
+results_resid.append(run_residualized_model(data_resid_S1S2, "sp", "S1-S2"))
+results_resid.append(run_residualized_model(data_resid_S3S4, "sp", "S3-S4"))
+results_resid.append(run_residualized_model(data_resid_S1S2, "cp", "S1-S2"))
+results_resid.append(run_residualized_model(data_resid_S3S4, "cp", "S3-S4"))
+
+compare_models(results_resid)
+
+# Plots — using dedicated function that includes stack_count_resid in the dataframe
+for data, tissue, pair, result in [
+    (data_resid_S1S2, "sp", "S1-S2", results_resid[0]),
+    (data_resid_S3S4, "sp", "S3-S4", results_resid[1]),
+    (data_resid_S1S2, "cp", "S1-S2", results_resid[2]),
+    (data_resid_S3S4, "cp", "S3-S4", results_resid[3]),
+]:
+    if result is not None:
+        fig = plot_universal_results(data, tissue, pair, result)
+        if fig:
+            plt.show()
+
+
+# # Model with QA_mean
+# ### Model: Vol_diff ~ GA + SNR_diff + QA_mean + stack_count
+# Checking for correlation between poor overall quality vs unreliable segmentation 
+
+# In[46]:
+
+
+# MODEL WITH QA MEAN (overall quality) INSTEAD OF QA DIFF
+# =============================================================================
+# Model: Vol_diff ~ GA + SNR_diff + QA_mean + stack_count
+#
+# Hypothesis: Overall reconstruction quality (not quality difference between
+# splits) may predict segmentation volume differences. Poor overall quality
+# could lead to less reliable segmentations regardless of split.
+#
+# QA12_mean is used for S1-S2, QA34_mean for S3-S4.
+# =============================================================================
+
+
+def prepare_qa_mean_data(quality_df, infodump_df, split_comp_df, split_pair):
+    """
+    Prepare data using QA_mean instead of QA_diff.
+
+    Uses QA12_mean for S1-S2 and QA34_mean for S3-S4 from infodump_df.
+    """
+    # Filter split comparison data for this pair
+    comp_data = split_comp_df[split_comp_df["split_pair"] == split_pair].copy()
+    comp_data["subject_id"] = comp_data["subject_id"].astype(str)
+    comp_data["session_id"] = comp_data["session_id"].astype(str)
+
+    # Get the two splits and corresponding QA mean column
+    if split_pair == "S1-S2":
+        split1, split2 = "S1", "S2"
+        qa_mean_col = "QA12_mean"
+    else:
+        split1, split2 = "S3", "S4"
+        qa_mean_col = "QA34_mean"
+
+    # Compute SNR differences from quality_df (same as original)
+    quality_copy = quality_df.copy()
+    quality_copy["subject_id"] = quality_copy["subject_id"].astype(str)
+    quality_copy["session_id"] = quality_copy["session_id"].astype(str)
+
+    snr_s1 = quality_copy[quality_copy["split"] == split1][
+        ["subject_id", "session_id", "snr_subplate", "snr_cortical_plate"]
+    ].copy()
+    snr_s1 = snr_s1.rename(
+        columns={"snr_subplate": "snr_sp_1", "snr_cortical_plate": "snr_cp_1"}
+    )
+
+    snr_s2 = quality_copy[quality_copy["split"] == split2][
+        ["subject_id", "session_id", "snr_subplate", "snr_cortical_plate"]
+    ].copy()
+    snr_s2 = snr_s2.rename(
+        columns={"snr_subplate": "snr_sp_2", "snr_cortical_plate": "snr_cp_2"}
+    )
+
+    snr_merged = snr_s1.merge(snr_s2, on=["subject_id", "session_id"], how="inner")
+    snr_merged["snr_diff_sp"] = abs(snr_merged["snr_sp_1"] - snr_merged["snr_sp_2"])
+    snr_merged["snr_diff_cp"] = abs(snr_merged["snr_cp_1"] - snr_merged["snr_cp_2"])
+
+    # Prepare infodump data with QA mean
+    infodump = infodump_df.copy()
+    infodump["subject_id"] = infodump["subject_id"].astype(str)
+    infodump["session_id"] = infodump["session_id"].astype(str)
+
+    # Merge everything
+    merged = comp_data.merge(
+        snr_merged[["subject_id", "session_id", "snr_diff_sp", "snr_diff_cp"]],
+        on=["subject_id", "session_id"],
+        how="inner",
+    )
+
+    merged = merged.merge(
+        infodump[["subject_id", "session_id", "stack_count", qa_mean_col]],
+        on=["subject_id", "session_id"],
+        how="inner",
+    )
+
+    # Rename for clarity
+    merged = merged.rename(
+        columns={
+            "abs_diff_sp": "vol_diff_sp",
+            "abs_diff_cp": "vol_diff_cp",
+            qa_mean_col: "qa_mean",
+        }
+    )
+
+    # Convert volume from mm³ to cm³
+    merged["vol_diff_sp"] = merged["vol_diff_sp"] / 1000
+    merged["vol_diff_cp"] = merged["vol_diff_cp"] / 1000
+
+    return merged
+
+
+def run_qa_mean_model(df, tissue, split_pair, print_results=True):
+    """
+    Run OLS: vol_diff ~ GA + snr_diff + qa_mean + stack_count
+    """
+    vol_col = f"vol_diff_{tissue}"
+    snr_col = f"snr_diff_{tissue}"
+
+    analysis_df = df[["GA", snr_col, "qa_mean", "stack_count", vol_col]].dropna().copy()
+    analysis_df = analysis_df.rename(columns={snr_col: "snr_diff", vol_col: "vol_diff"})
+
+    n = len(analysis_df)
+    if n < 10:
+        print(f"WARNING: Only {n} complete cases for {tissue.upper()} {split_pair}")
+        return None
+
+    formula = "vol_diff ~ GA + snr_diff + qa_mean + stack_count"
+    model = smf.ols(formula, data=analysis_df).fit()
+
+    X = analysis_df[["GA", "snr_diff", "qa_mean", "stack_count"]]
+    vif_df = compute_vif(X)
+
+    if print_results:
+        print(f"\n{'='*70}")
+        print(f"QA-MEAN MODEL: {tissue.upper()} Volume Difference ({split_pair})")
+        print(f"{'='*70}")
+        print(f"N = {n} subjects")
+        print(f"Formula: vol_diff ~ GA + snr_diff + qa_mean + stack_count")
+        print(f"\n{'-'*70}")
+        print("MODEL SUMMARY")
+        print(f"{'-'*70}")
+        print(f"R-squared:          {model.rsquared:.4f}")
+        print(f"Adjusted R-squared: {model.rsquared_adj:.4f}")
+        print(f"F-statistic:        {model.fvalue:.4f}")
+        print(
+            f"F p-value:          {model.f_pvalue:.4f} {'***' if model.f_pvalue < 0.001 else '**' if model.f_pvalue < 0.01 else '*' if model.f_pvalue < 0.05 else ''}"
+        )
+
+        print(f"\n{'-'*70}")
+        print("COEFFICIENTS")
+        print(f"{'-'*70}")
+        print(
+            f"{'Variable':<15} {'Coef':>10} {'Std Err':>10} {'t':>8} {'P>|t|':>10} {'Sig':>5}"
+        )
+        print(f"{'-'*70}")
+        for var in model.params.index:
+            coef = model.params[var]
+            stderr = model.bse[var]
+            tval = model.tvalues[var]
+            pval = model.pvalues[var]
+            sig = (
+                "***"
+                if pval < 0.001
+                else "**" if pval < 0.01 else "*" if pval < 0.05 else ""
+            )
+            print(
+                f"{var:<15} {coef:>10.4f} {stderr:>10.4f} {tval:>8.3f} {pval:>10.4f} {sig:>5}"
+            )
+
+        print(f"\n{'-'*70}")
+        print("COLLINEARITY CHECK (VIF)")
+        print(f"{'-'*70}")
+        for _, row in vif_df.iterrows():
+            flag = " ⚠️" if row["VIF"] > 5 else " ✓"
+            print(f"  {row['Variable']:<15}: {row['VIF']:.2f}{flag}")
+
+    return {
+        "tissue": tissue,
+        "split_pair": split_pair,
+        "n": n,
+        "model": model,
+        "model_name": "QA-Mean",
+        "formula": "Vol_diff ~ GA + SNR_diff + QA_mean + stack_count",
+        "r_squared": model.rsquared,
+        "adj_r_squared": model.rsquared_adj,
+        "f_stat": model.fvalue,
+        "f_pvalue": model.f_pvalue,
+        "coefficients": model.params.to_dict(),
+        "pvalues": model.pvalues.to_dict(),
+        "vif": vif_df,
+    }
+
+
+# =============================================================================
+# RUN QA-MEAN MODELS
+# =============================================================================
+
+print("=" * 80)
+print("QA-MEAN MODEL: Vol_diff ~ GA + SNR_diff + QA_mean + stack_count")
+print("(Uses overall reconstruction quality instead of quality difference)")
+print("=" * 80)
+
+data_qamean_S1S2 = prepare_qa_mean_data(quality_df, infodump_df, split_comp_df, "S1-S2")
+data_qamean_S3S4 = prepare_qa_mean_data(quality_df, infodump_df, split_comp_df, "S3-S4")
+
+print(f"\nData prepared:")
+print(f"  S1-S2: {len(data_qamean_S1S2)} subjects")
+print(f"  S3-S4: {len(data_qamean_S3S4)} subjects")
+
+results_qamean = []
+results_qamean.append(run_qa_mean_model(data_qamean_S1S2, "sp", "S1-S2"))
+results_qamean.append(run_qa_mean_model(data_qamean_S3S4, "sp", "S3-S4"))
+results_qamean.append(run_qa_mean_model(data_qamean_S1S2, "cp", "S1-S2"))
+results_qamean.append(run_qa_mean_model(data_qamean_S3S4, "cp", "S3-S4"))
+
+compare_models(results_qamean)
+
+# Plots
+for data, tissue, pair, result in [
+    (data_qamean_S1S2, "sp", "S1-S2", results_qamean[0]),
+    (data_qamean_S3S4, "sp", "S3-S4", results_qamean[1]),
+    (data_qamean_S1S2, "cp", "S1-S2", results_qamean[2]),
+    (data_qamean_S3S4, "cp", "S3-S4", results_qamean[3]),
+]:
+    if result is not None:
+        fig = plot_universal_results(data, tissue, pair, result)
+        if fig:
+            plt.show()
+
+
+# ### Results
+
+
+# =============================================================================
+# GENERATE THE SUMMARY TABLE
+# =============================================================================
+
+# Collect all model groups
+# Note: 'results' is the original model, 'results_resid' is residualized,
+# 'results_qamean' is QA-mean. These should already exist from previous cells.
+
+all_model_groups = [
+    ("Original (QA_diff)", results),
+    (
+        "Reduced (no stack_count)",
+        [
+            (
+                {
+                    "tissue": "sp",
+                    "split_pair": "S1-S2",
+                    "n": len(data_S1S2),
+                    "model": model_sp_s12_reduced,
+                    "model_name": "Reduced",
+                    "formula": "Vol_diff ~ GA + SNR_diff + QA_diff",
+                    "r_squared": model_sp_s12_reduced.rsquared,
+                    "adj_r_squared": model_sp_s12_reduced.rsquared_adj,
+                    "f_stat": model_sp_s12_reduced.fvalue,
+                    "f_pvalue": model_sp_s12_reduced.f_pvalue,
+                    "coefficients": model_sp_s12_reduced.params.to_dict(),
+                    "pvalues": model_sp_s12_reduced.pvalues.to_dict(),
+                    "vif": None,
+                }
+                if model_sp_s12_reduced
+                else None
+            ),
+            (
+                {
+                    "tissue": "sp",
+                    "split_pair": "S3-S4",
+                    "n": len(data_S3S4),
+                    "model": model_sp_s34_reduced,
+                    "model_name": "Reduced",
+                    "formula": "Vol_diff ~ GA + SNR_diff + QA_diff",
+                    "r_squared": model_sp_s34_reduced.rsquared,
+                    "adj_r_squared": model_sp_s34_reduced.rsquared_adj,
+                    "f_stat": model_sp_s34_reduced.fvalue,
+                    "f_pvalue": model_sp_s34_reduced.f_pvalue,
+                    "coefficients": model_sp_s34_reduced.params.to_dict(),
+                    "pvalues": model_sp_s34_reduced.pvalues.to_dict(),
+                    "vif": None,
+                }
+                if model_sp_s34_reduced
+                else None
+            ),
+            (
+                {
+                    "tissue": "cp",
+                    "split_pair": "S1-S2",
+                    "n": len(data_S1S2),
+                    "model": model_cp_s12_reduced,
+                    "model_name": "Reduced",
+                    "formula": "Vol_diff ~ GA + SNR_diff + QA_diff",
+                    "r_squared": model_cp_s12_reduced.rsquared,
+                    "adj_r_squared": model_cp_s12_reduced.rsquared_adj,
+                    "f_stat": model_cp_s12_reduced.fvalue,
+                    "f_pvalue": model_cp_s12_reduced.f_pvalue,
+                    "coefficients": model_cp_s12_reduced.params.to_dict(),
+                    "pvalues": model_cp_s12_reduced.pvalues.to_dict(),
+                    "vif": None,
+                }
+                if model_cp_s12_reduced
+                else None
+            ),
+            (
+                {
+                    "tissue": "cp",
+                    "split_pair": "S3-S4",
+                    "n": len(data_S3S4),
+                    "model": model_cp_s34_reduced,
+                    "model_name": "Reduced",
+                    "formula": "Vol_diff ~ GA + SNR_diff + QA_diff",
+                    "r_squared": model_cp_s34_reduced.rsquared,
+                    "adj_r_squared": model_cp_s34_reduced.rsquared_adj,
+                    "f_stat": model_cp_s34_reduced.fvalue,
+                    "f_pvalue": model_cp_s34_reduced.f_pvalue,
+                    "coefficients": model_cp_s34_reduced.params.to_dict(),
+                    "pvalues": model_cp_s34_reduced.pvalues.to_dict(),
+                    "vif": None,
+                }
+                if model_cp_s34_reduced
+                else None
+            ),
+        ],
+    ),
+    ("Residualized stack_count", results_resid),
+    ("QA-Mean", results_qamean),
+]
+
+fig = plot_summary_table(all_model_groups)
+plt.show()
+
+# Also print a clean text version for copy-paste
+print("\n" + "=" * 100)
+print("CROSS-MODEL COMPARISON (all variants)")
+print("=" * 100)
+
+for group_name, results_list in all_model_groups:
+    valid = [r for r in results_list if r is not None]
+    if not valid:
+        continue
+    print(f"\n--- {group_name} ---")
+    formula = valid[0].get("formula", "N/A")
+    print(f"    Formula: {formula}")
+    print(f"    {'Column':<20} {'N':>5} {'R²':>8} {'Adj R²':>8} {'F':>8} {'F p':>10}")
+    for r in valid:
+        label = f"{r['tissue'].upper()} ({r['split_pair']})"
+        sig = _sig_stars(r["f_pvalue"])
+        print(
+            f"    {label:<20} {r['n']:>5} {r['r_squared']:>8.4f} {r['adj_r_squared']:>8.4f} {r['f_stat']:>8.2f} {r['f_pvalue']:>9.4f}{sig}"
+        )
+
+
+
+# In[18]:
 
 
 def print_final_summary(reliability_df, quality_df, infodump_df):
@@ -1684,3 +2695,5 @@ def print_final_summary(reliability_df, quality_df, infodump_df):
 
 print_final_summary(reliability_df, quality_df, infodump_df)
 
+
+# %%
