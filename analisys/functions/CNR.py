@@ -23,9 +23,7 @@ def compute_cr(t2_data, seg_data, connectivity=3):
     sp_mask = np.isin(seg_data, TISSUE_LABELS["sp"])
     iz_mask = np.isin(seg_data, TISSUE_LABELS["inner"])
 
-    # SP boundary: SP voxels adjacent to IZ
     sp_boundary = sp_mask & binary_dilation(iz_mask, structure=struct)
-    # IZ boundary: IZ voxels adjacent to SP
     iz_boundary = iz_mask & binary_dilation(sp_mask, structure=struct)
 
     # Get a band of the sp by removing the boundary
@@ -33,8 +31,9 @@ def compute_cr(t2_data, seg_data, connectivity=3):
     sp_band = sp_eroded  # the inner core, away from both CP and IZ
 
     # Get a band of the iz by dilating the boundary inwards
-    iz_band_dilated = binary_dilation(iz_boundary, iterations=3, structure=struct)
+    iz_band_dilated = binary_dilation(iz_boundary, iterations=2, structure=struct)
     iz_band = iz_band_dilated & iz_mask
+    iz_band = iz_band & ~iz_boundary
 
     sp_int = t2_data[sp_band]
     iz_int = t2_data[iz_band]
