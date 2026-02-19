@@ -36,9 +36,12 @@ def compute_boundary_cr(t2_data, seg_data, connectivity=3):
     mean_iz = np.mean(iz_int) if len(iz_int) > 0 else np.nan
     denom = mean_sp + mean_iz
     cr = (mean_sp - mean_iz) / denom if denom != 0 else np.nan
+    
+    abs_diff = abs(mean_sp - mean_iz)
 
     return {
         "cr": cr,
+        "abs_cr_diff": abs_diff,
         "mean_sp_boundary": mean_sp,
         "mean_iz_boundary": mean_iz,
         "n_sp_boundary": int(np.sum(sp_boundary)),
@@ -48,7 +51,6 @@ def compute_boundary_cr(t2_data, seg_data, connectivity=3):
         "sp_boundary": sp_boundary,
         "iz_boundary": iz_boundary,
     }
-
 
 def plot_boundary_cr(t2_data, result, subject_id="", session_id="", split=""):
     """
@@ -235,8 +237,11 @@ def batch_boundary_cr(subjects_df, base_path, splits=None):
             if not os.path.exists(t2_p) or not os.path.exists(seg_p):
                 continue
             try:
+                t2 = nib.load(t2_p).get_fdata()
+                seg = nib.load(seg_p).get_fdata()
+
                 r = compute_boundary_cr(
-                    nib.load(t2_p).get_fdata(), nib.load(seg_p).get_fdata()
+                    t2, seg
                 )
                 records.append(
                     {
@@ -245,6 +250,7 @@ def batch_boundary_cr(subjects_df, base_path, splits=None):
                         "GA": ga,
                         "split": split,
                         "boundary_cr": r["cr"],
+                        "abs_cr_diff": r["abs_cr_diff"],
                         "mean_sp_boundary": r["mean_sp_boundary"],
                         "mean_iz_boundary": r["mean_iz_boundary"],
                         "n_sp_boundary": r["n_sp_boundary"],
@@ -262,16 +268,20 @@ if __name__ == "__main__":
     base_path = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
     subjects_df = pd.read_csv("../../data/subject.csv")
     quality_df = pd.read_csv("../../data/image_quality_metrics.csv")
+    split_pair_diffs = pd.read_csv("../../data/split_comparision_data.csv")
 
     # Compute CNR data
     cnr_data = batch_boundary_cr(subjects_df, base_path)
 
-    if "sp_iz_cnr" in quality_df:
-        quality_df = quality_df.drop(columns=["sp_iz_cnr"])
+    cols = ["sp_iz_cnr", "abs_cr_diff"]
+
+    for col in cols:
+        if col in quality_df.columns:
+            quality_df = quality_df.drop(columns=[col])
 
     # Merge CNR data into quality_df on subject_id, session_id, and split
     quality_df = quality_df.merge(
-        cnr_data[["subject_id", "session_id", "split", "boundary_cr"]],
+        cnr_data[["subject_id", "session_id", "split", "boundary_cr", "abs_cr_diff"]],
         on=["subject_id", "session_id", "split"],
         how="left",
     )
@@ -283,7 +293,72 @@ if __name__ == "__main__":
     quality_df.to_csv("../../data/image_quality_metrics.csv", index=False)
 
     print("\n")
-    print("Successfully added sp_iz_cnr column to image_quality_metrics.csv")
+    print("Successfully added sp_iz_cnr and abs_cr_diff columns to image_quality_metrics.csv")
     print(f"\nUpdated dataframe shape: {quality_df.shape}")
-    print(f"\nFirst few rows of sp_iz_cnr column:")
-    print(quality_df[["subject_id", "session_id", "split", "sp_iz_cnr"]].head(10))
+    print(f"\nFirst few rows of sp_iz_cnr and abs_cr_diff columns:")
+    print(quality_df[["subject_id", "session_id", "split", "sp_iz_cnr", "abs_cr_diff"]].head(10))
+
+    # === Compute CNR diff and mean for split pairs (S1-S2, S3-S4) ===
+    print("\n\nComputing CNR differences and means for split pairs...")
+    
+    # Create a pivot table for easy access to CNR values by split
+    cnr_pivot = cnr_data.pivot_table(
+        index=["subject_id", "session_id"],
+        columns="split",
+        values="boundary_cr",
+        aggfunc="first"
+    ).reset_index()
+    
+    # Compute CNR diff and mean for each split pair
+    cnr_pair_records = []
+    for _, row in cnr_pivot.iterrows():
+        subj = row["subject_id"]
+        sess = row["session_id"]
+        
+        # S1-S2 pair
+        if "S1" in row.index and "S2" in row.index:
+            s1_cnr = row.get("S1", np.nan)
+            s2_cnr = row.get("S2", np.nan)
+            if pd.notna(s1_cnr) and pd.notna(s2_cnr):
+                cnr_pair_records.append({
+                    "subject_id": subj,
+                    "session_id": sess,
+                    "split_pair": "S1-S2",
+                    "cnr_diff": abs(s1_cnr - s2_cnr),
+                    "cnr_mean": (s1_cnr + s2_cnr) / 2
+                })
+        
+        # S3-S4 pair
+        if "S3" in row.index and "S4" in row.index:
+            s3_cnr = row.get("S3", np.nan)
+            s4_cnr = row.get("S4", np.nan)
+            if pd.notna(s3_cnr) and pd.notna(s4_cnr):
+                cnr_pair_records.append({
+                    "subject_id": subj,
+                    "session_id": sess,
+                    "split_pair": "S3-S4",
+                    "cnr_diff": abs(s3_cnr - s4_cnr),
+                    "cnr_mean": (s3_cnr + s4_cnr) / 2
+                })
+    
+    cnr_pair_df = pd.DataFrame(cnr_pair_records)
+    
+    # Remove existing cnr_diff and cnr_mean columns if they exist
+    for col in ["cnr_diff", "cnr_mean"]:
+        if col in split_pair_diffs.columns:
+            split_pair_diffs = split_pair_diffs.drop(columns=[col])
+    
+    # Merge CNR pair data into split_pair_diffs
+    split_pair_diffs = split_pair_diffs.merge(
+        cnr_pair_df,
+        on=["subject_id", "session_id", "split_pair"],
+        how="left"
+    )
+    
+    # Save the updated split comparison dataframe
+    split_pair_diffs.to_csv("../../data/split_comparision_data.csv", index=False)
+    
+    print("Successfully added cnr_diff and cnr_mean columns to split_comparision_data.csv")
+    print(f"\nUpdated split comparison dataframe shape: {split_pair_diffs.shape}")
+    print(f"\nFirst few rows with CNR columns:")
+    print(split_pair_diffs[["subject_id", "session_id", "split_pair", "cnr_diff", "cnr_mean"]].head(10))
