@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.ndimage import binary_dilation, generate_binary_structure
 import os
 import matplotlib.pyplot as plt
-from functions.helpers import get_middle_slice, normalize_intensity
+from helpers import get_middle_slice, normalize_intensity
 
 TISSUE_LABELS = {
     "sp": [4, 5],
@@ -24,17 +24,12 @@ def compute_cr(t2_data, seg_data, connectivity=3):
     iz_mask = np.isin(seg_data, TISSUE_LABELS["inner"])
 
     # SP boundary: SP voxels adjacent to IZ
-    sp_boundary = sp_mask & binary_dilation(iz_mask, structure=struct)
+    sp_boundary = sp_mask & binary_dilation(iz_mask, structure=struct, iterations=1)
     # IZ boundary: IZ voxels adjacent to SP
-    iz_boundary = iz_mask & binary_dilation(sp_mask, structure=struct)
+    iz_boundary = iz_mask & binary_dilation(sp_mask, structure=struct, iterations=1)
 
-    # Get a band of the sp by removing the boundary
-    sp_band = sp_mask & ~sp_boundary
-
-    # Get a band of the iz by dilating the boundary inwards
-    iz_band_dilated = binary_dilation(iz_boundary, iterations=3, structure=struct)
-    iz_band = iz_band_dilated & iz_mask
-    iz_band = iz_band & ~iz_boundary
+    sp_band = sp_boundary
+    iz_band = iz_boundary
 
     sp_int = t2_data[sp_band]
     iz_int = t2_data[iz_band]
