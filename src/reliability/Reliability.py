@@ -5,7 +5,6 @@
 
 
 # Imports
-
 import nibabel as nib
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,7 +23,7 @@ from src.functions.helpers import (
 )
 
 
-# In[3]:
+# In[ ]:
 
 
 # 1. Configuration
@@ -358,7 +357,7 @@ with PdfPages(pdf_output_path) as pdf:
 
 # 4. Cross-split comparison function
 
-from src.image_quality_metrics import SPLITS  # noqa: E402
+from src.image_quality_metrics import SPLITS
 
 def cross_split_reliability_analysis(
     segmentation_files, labels_to_compare, title, label_description="", 
@@ -743,7 +742,7 @@ print(f"{'='*80}\n")
 
 # 6. Image Quality Metrics Analysis
 # Configuration
-from src.image_quality_metrics import (  # noqa: E402
+from src.image_quality_metrics import (
     compute_subject_split_metrics,
     build_paths,
     print_summary,
@@ -918,11 +917,12 @@ def plot_cr_bands(t2_data, cr_result, title="CR Bands", ax=None):
     return fig
 
 
-# In[12]:
+# In[ ]:
 
 
 import importlib
-import src.functions.CNR as cnr  
+
+import src.functions.CNR as cnr
 importlib.reload(cnr)
 
 cnr_vals = []

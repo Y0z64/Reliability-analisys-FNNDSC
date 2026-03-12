@@ -50,8 +50,8 @@ for idx, row in subjects_df.iterrows():
         continue
 
 print(f"\n{'='*80}")
-print(f"BATCH PROCESSING COMPLETE")
-print(f"PDF report: reliability_report.pdf")
-print(f"CSV metrics: cross_split_metrics.csv")
+print("BATCH PROCESSING COMPLETE")
+print("PDF report: reliability_report.pdf")
+print("CSV metrics: cross_split_metrics.csv")
 print(f"Individual notebooks saved to: {OUTPUT_DIR}/")
 print(f"{'='*80}\n")
