@@ -10,6 +10,7 @@ data
 tempscript*
 
 __pycache__/
+.ruff_cache/
 *.py[oc]
 build/
 dist/

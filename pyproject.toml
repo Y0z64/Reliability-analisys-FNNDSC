@@ -4,4 +4,26 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "importlib>=1.0.4",
+    "jupyter>=1.1.1",
+    "jupytext>=1.19.1",
+    "matplotlib>=3.10.8",
+    "nbconvert>=7.17.0",
+    "nibabel>=5.4.2",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "scikit-learn>=1.8.0",
+    "statsmodels>=0.14.6",
+    "tabulate>=0.10.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.5",
+    "ty>=0.0.22",
+]
+
+
+[tool.ruff.lint]
+ignore = ["E402"]

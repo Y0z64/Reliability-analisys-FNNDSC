@@ -1,9 +1,7 @@
-FREESURFER_LUT_PATH = "/neuro/labs/grantlab/research/MRI_processing/yair.beltran/Reliability/FreeSurferColorLUT.txt"
-# FREESURFER_LUT_PATH = "/home/yair/Projects/Reliability/FreeSurferColorLUT.txt"
-
-
 import numpy as np
 from scipy.spatial.distance import directed_hausdorff
+
+FREESURFER_LUT_PATH = "/neuro/labs/grantlab/research/MRI_processing/yair.beltran/Reliability/FreeSurferColorLUT.txt"
 
 
 def get_middle_slice(data, axis):
