@@ -3,9 +3,10 @@ reports
 *.pdf
 *.nii
 __pycache__
-.vscode
+vscode
+*vscode
+*.vscode
 subjects_batched
 data
-.vscode
 *.csv
 tempscript*

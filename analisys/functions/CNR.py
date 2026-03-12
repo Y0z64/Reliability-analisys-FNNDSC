@@ -1,10 +1,10 @@
 import nibabel as nib
 import numpy as np
 import pandas as pd
-from scipy.ndimage import binary_dilation, generate_binary_structure
+from scipy.ndimage import binary_dilation, generate_binary_structure, binary_erosion
 import os
 import matplotlib.pyplot as plt
-from helpers import get_middle_slice, normalize_intensity
+from functions.helpers import get_middle_slice, normalize_intensity
 
 TISSUE_LABELS = {
     "sp": [4, 5],
@@ -24,7 +24,7 @@ def compute_cr(t2_data, seg_data, connectivity=3):
     iz_mask = np.isin(seg_data, TISSUE_LABELS["inner"])
 
     # SP boundary: SP voxels adjacent to IZ
-    sp_boundary = sp_mask & binary_dilation(iz_mask, structure=struct, iterations=1)
+    sp_boundary = sp_mask & binary_dilation(iz_mask, structure=struct, iterations=2)
     # IZ boundary: IZ voxels adjacent to SP
     iz_boundary = iz_mask & binary_dilation(sp_mask, structure=struct, iterations=1)
 
