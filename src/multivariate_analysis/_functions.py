@@ -7,9 +7,6 @@ import scipy.stats as stats
 import statsmodels.formula.api as smf
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-# Load split comparison data (has volume differences already computed)
-split_comp_df = pd.read_csv("../data/split_comparision_data.csv")
-
 
 def prepare_analysis_data(quality_df, infodump_df, split_comp_df, split_pair, 
                          volume_conversion_factor=1000):
@@ -37,13 +34,20 @@ def prepare_analysis_data(quality_df, infodump_df, split_comp_df, split_pair,
     # Parse split pair
     split1, split2 = split_pair.split('-')
     
+    # Normalize column names to avoid KeyError from hidden whitespace.
+    quality_df = quality_df.copy()
+    infodump_df = infodump_df.copy()
+    split_comp_df = split_comp_df.copy()
+    quality_df.columns = quality_df.columns.astype(str).str.strip()
+    infodump_df.columns = infodump_df.columns.astype(str).str.strip()
+    split_comp_df.columns = split_comp_df.columns.astype(str).str.strip()
+
     # Filter and prepare comparison data
     comp_data = split_comp_df[split_comp_df["split_pair"] == split_pair].copy()
     comp_data["subject_id"] = comp_data["subject_id"].astype(str)
     comp_data["session_id"] = comp_data["session_id"].astype(str)
 
     # Prepare quality data
-    quality_df = quality_df.copy()
     quality_df["subject_id"] = quality_df["subject_id"].astype(str)
     quality_df["session_id"] = quality_df["session_id"].astype(str)
 
@@ -72,6 +76,22 @@ def prepare_analysis_data(quality_df, infodump_df, split_comp_df, split_pair,
     infodump["subject_id"] = infodump["subject_id"].astype(str)
     infodump["session_id"] = infodump["session_id"].astype(str)
 
+    # Build a robust GA lookup table from available sources.
+    ga_sources = []
+    if "GA" in comp_data.columns:
+        ga_sources.append(comp_data[["subject_id", "session_id", "GA"]].copy())
+    if "GA" in infodump.columns:
+        ga_sources.append(infodump[["subject_id", "session_id", "GA"]].copy())
+    if "GA" in quality_df.columns:
+        ga_sources.append(quality_df[["subject_id", "session_id", "GA"]].copy())
+
+    ga_lookup = None
+    if ga_sources:
+        ga_lookup = pd.concat(ga_sources, ignore_index=True)
+        ga_lookup = ga_lookup.dropna(subset=["GA"]).drop_duplicates(
+            subset=["subject_id", "session_id"], keep="first"
+        )
+
     # Compute QA difference dynamically
     qa1_col = f"QA_{split1}"
     qa2_col = f"QA_{split2}"
@@ -86,19 +106,25 @@ def prepare_analysis_data(quality_df, infodump_df, split_comp_df, split_pair,
             print(f"Warning: No QA difference found for {split_pair}")
             infodump["qa_diff"] = np.nan
 
-    # Merge all data
+    # Merge all data using subject/session keys, then attach GA consistently.
     merged = comp_data.merge(
         snr_merged[["subject_id", "session_id", "snr_diff_sp", "snr_diff_cp"]],
         on=["subject_id", "session_id"], how="inner"
     )
-    
-    merge_cols = ["subject_id", "session_id", "stack_count", "qa_diff"]
-    if "GA" in infodump.columns:
-        merge_cols.append("GA")
-    
-    merged = merged.merge(
-        infodump[merge_cols], on=["subject_id", "session_id"], how="inner"
-    )
+
+    infodump_cols = ["subject_id", "session_id", "stack_count", "qa_diff"]
+    merged = merged.merge(infodump[infodump_cols], on=["subject_id", "session_id"], how="inner")
+
+    if ga_lookup is not None:
+        merged = merged.merge(ga_lookup, on=["subject_id", "session_id"], how="left")
+
+    # Keep a single canonical GA column and cast to numeric when available.
+    if "GA" not in merged.columns:
+        ga_candidates = [c for c in merged.columns if c.startswith("GA")]
+        if ga_candidates:
+            merged["GA"] = merged[ga_candidates].bfill(axis=1).iloc[:, 0]
+    if "GA" in merged.columns:
+        merged["GA"] = pd.to_numeric(merged["GA"], errors="coerce")
 
     # Standardize volume difference column names
     volume_cols = {"abs_diff_sp": "vol_diff_sp", "abs_diff_cp": "vol_diff_cp"}
@@ -201,6 +227,22 @@ def run_regression_model(df, outcome_col, predictors, model_name="",
     """
     # Create analysis dataframe with complete cases
     analysis_cols = [outcome_col] + predictors
+    
+    # Check for missing columns and provide helpful error message
+    missing_cols = [col for col in analysis_cols if col not in df.columns]
+    if missing_cols:
+        
+        available_cols = list(df.columns)
+        print(f"ERROR: Missing columns: {missing_cols}")
+        print(f"Available columns in dataframe: {available_cols}")
+        
+        # Try to suggest similar column names
+        for missing_col in missing_cols:
+            suggestions = [col for col in available_cols if missing_col.lower() in col.lower() or col.lower() in missing_col.lower()]
+            if suggestions:
+                print(f"Possible matches for '{missing_col}': {suggestions}")
+        return None
+    
     analysis_df = df[analysis_cols].dropna().copy()
     n = len(analysis_df)
 
