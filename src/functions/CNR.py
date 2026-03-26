@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.ndimage import binary_dilation, generate_binary_structure, binary_erosion
 import os
 import matplotlib.pyplot as plt
-from functions.helpers import get_middle_slice, normalize_intensity
+from .helpers import get_middle_slice, normalize_intensity
 
 TISSUE_LABELS = {
     "sp": [4, 5],
