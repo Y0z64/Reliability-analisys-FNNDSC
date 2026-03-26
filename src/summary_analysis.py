@@ -1,16 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Reliability Study Summary Analysis
-# 
-# This notebook generates summary visualizations from:
-# - cross_split_metrics.csv (Dice, Jaccard, relative_diff per model/subject)
-# - image_quality_metrics.csv (SNR, CNR per subject)
-# 
-# Run each cell in order in your Jupyter notebook.
-# 
-# 
-
 # In[11]:
 
 
