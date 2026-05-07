@@ -3,6 +3,9 @@
 
 Neuroimaging reliability analysis project for fetal brain segmentation at FNNDSC with the intention of writting a paper. Measures reproducibility of segmentation results across multiple processing splits (S1–S4) per subject using metrics like Dice coefficient, Hausdorff distance, Jaccard index, SNR, and CNR. The measurements are done in a specific model created to segment the subplate with the intention of recreating an older paper that measured reliability in older models without this feature.
 
+# Context
+Refer to the files at `/home/yair/Documents/MCP/MCP/Projects/Reliability/context` for context, explanation of the project and individual submodules and a consult and save a summary of the last work done.
+
 ## Commands
 
 ### Package Management (uv)
