@@ -148,7 +148,8 @@ def diagnostics_grid(
 
     for row_idx, (pair, df) in enumerate(pairs):
         res, _ = results_by_pair[pair]
-        keep_cols = [outcome] + predictors + ([id_col] if id_col in df.columns else [])
+        extra_id_cols = [c for c in (id_col, "session_id") if c in df.columns]
+        keep_cols = [outcome] + predictors + extra_id_cols
         sub = df[keep_cols].dropna(subset=[outcome] + predictors).reset_index(drop=True)
         X = sm.add_constant(sub[predictors])
         y = sub[outcome].to_numpy()
@@ -160,7 +161,20 @@ def diagnostics_grid(
         student_resid = infl.resid_studentized_internal
         # Indices of the n_outliers largest |studentized residual|
         outlier_idx = np.argsort(np.abs(student_resid))[-n_outliers:][::-1]
-        ids = sub[id_col].astype(str).tolist() if id_col in sub.columns else [str(i) for i in range(len(sub))]
+        if id_col in sub.columns and "session_id" in sub.columns:
+            ids = (sub[id_col].astype(str) + "/" + sub["session_id"].astype(str)).tolist()
+        elif id_col in sub.columns:
+            ids = sub[id_col].astype(str).tolist()
+        else:
+            ids = [str(i) for i in range(len(sub))]
+
+        print(f"\n[{model_label}] {pair} — top {n_outliers} outliers (|studentized residual|):")
+        for rank, i in enumerate(outlier_idx, start=1):
+            print(
+                f"  {rank}. {ids[i]}  "
+                f"studentized_resid={student_resid[i]:+.2f}  "
+                f"resid={resid[i]:+.3g}  fitted={yhat[i]:.3g}  actual={y[i]:.3g}"
+            )
 
         def label_at(ax, x_val, y_val, text):
             ax.annotate(
