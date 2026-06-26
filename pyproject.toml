@@ -19,6 +19,7 @@ dependencies = [
     "numpy>=2.4.3",
     "pandas>=3.0.1",
     "papermill>=2.7.0",
+    "pingouin>=0.6.1",
     "pycrdt>=0.12.50",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",

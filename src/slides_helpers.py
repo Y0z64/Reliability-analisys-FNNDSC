@@ -70,10 +70,14 @@ def fit_and_present(
     model_label: str,
     save_prefix: str,
     assets_dir: Path,
+    save_tables: bool = True,
 ):
     """Fit OLS for both split pairs, save tables + side-by-side forest plot.
 
     Returns a dict of {"S1-S2": (results, table), "S3-S4": (results, table)}.
+
+    Set ``save_tables=False`` to skip writing the per-pair coefficient CSVs
+    (e.g. when the inputs already live in a single source-of-truth file).
     """
     import statsmodels.api as sm
     from IPython.display import display
@@ -97,8 +101,9 @@ def fit_and_present(
             ax=ax,
         )
 
-        table_path = assets_dir / f"{save_prefix}_{pair.replace('-', '')}_table.csv"
-        table.to_csv(table_path)
+        if save_tables:
+            table_path = assets_dir / f"{save_prefix}_{pair.replace('-', '')}_table.csv"
+            table.to_csv(table_path)
 
         output[pair] = (res, table)
         print(f"\n=== {model_label} | {pair} | "
