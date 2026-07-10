@@ -173,6 +173,15 @@ def diagnostics_grid(
         else:
             ids = [str(i) for i in range(len(sub))]
 
+        # Short labels for the plot annotations: subject_id only. The full
+        # ``ids`` (subject_id/session_id) is kept for the printed report, but
+        # session_id is a long date string that gets truncated to a
+        # meaningless stub (e.g. "FCB141/201") when drawn on the panels.
+        if id_col in sub.columns:
+            plot_ids = sub[id_col].astype(str).tolist()
+        else:
+            plot_ids = ids
+
         print(f"\n[{model_label}] {pair} — top {n_outliers} outliers (|studentized residual|):")
         for rank, i in enumerate(outlier_idx, start=1):
             print(
@@ -183,7 +192,7 @@ def diagnostics_grid(
 
         def label_at(ax, x_val, y_val, text):
             ax.annotate(
-                text[:10], xy=(x_val, y_val),
+                text, xy=(x_val, y_val),
                 xytext=(6, 6), textcoords="offset points",
                 fontsize=7, color="darkred", weight="bold",
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="darkred", alpha=0.85, lw=0.5),
@@ -194,7 +203,7 @@ def diagnostics_grid(
         ax.scatter(y, yhat, alpha=0.75, edgecolor="k", linewidth=0.4)
         ax.scatter(y[outlier_idx], yhat[outlier_idx], color="red", s=60, edgecolor="k", linewidth=0.6, zorder=5, label="Top outliers")
         for i in outlier_idx:
-            label_at(ax, y[i], yhat[i], ids[i])
+            label_at(ax, y[i], yhat[i], plot_ids[i])
         lim = [min(y.min(), yhat.min()), max(y.max(), yhat.max())]
         pad = 0.05 * (lim[1] - lim[0])
         lim = [lim[0] - pad, lim[1] + pad]
@@ -211,7 +220,7 @@ def diagnostics_grid(
         ax.scatter(yhat, resid, alpha=0.75, edgecolor="k", linewidth=0.4)
         ax.scatter(yhat[outlier_idx], resid[outlier_idx], color="red", s=60, edgecolor="k", linewidth=0.6, zorder=5)
         for i in outlier_idx:
-            label_at(ax, yhat[i], resid[i], ids[i])
+            label_at(ax, yhat[i], resid[i], plot_ids[i])
         ax.axhline(0, color="r", linestyle="--", alpha=0.6)
         ax.set_xlabel("Fitted")
         ax.set_ylabel("Residual")
@@ -237,7 +246,7 @@ def diagnostics_grid(
         for i in outlier_idx:
             pos = int(np.where(sort_order == i)[0][0])
             ax.scatter(theo_q[pos], sorted_resid[pos], color="red", s=60, edgecolor="k", linewidth=0.6, zorder=5)
-            label_at(ax, theo_q[pos], sorted_resid[pos], ids[i])
+            label_at(ax, theo_q[pos], sorted_resid[pos], plot_ids[i])
         ax.set_xlabel("Theoretical quantiles")
         ax.set_ylabel("Ordered residuals")
         ax.set_title(f"{pair}: QQ-plot (residual normality)")
@@ -250,7 +259,7 @@ def diagnostics_grid(
             ax.scatter(ga_vals, resid, alpha=0.75, edgecolor="k", linewidth=0.4)
             ax.scatter(ga_vals[outlier_idx], resid[outlier_idx], color="red", s=60, edgecolor="k", linewidth=0.6, zorder=5)
             for i in outlier_idx:
-                label_at(ax, ga_vals[i], resid[i], ids[i])
+                label_at(ax, ga_vals[i], resid[i], plot_ids[i])
             ax.axhline(0, color="r", linestyle="--", alpha=0.6)
             ax.set_xlabel("GA (weeks)")
             ax.set_ylabel("Residual")
