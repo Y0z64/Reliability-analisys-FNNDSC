@@ -27,39 +27,6 @@ def get_split_data(quality_df, subject_id, session_id, split):
     return result.iloc[0] if len(result) > 0 else None
 
 
-def _compute_split_pair_diff(quality_df, column, split1, split2, relative=True):
-    """
-    Compute difference between two splits for a given column.
-    Uses subject_id + session_id as unique identifier to handle subjects with multiple sessions.
-    """
-    # Get data for each split
-    s1_df = quality_df[quality_df["split"] == split1][
-        ["subject_id", "session_id", column]
-    ].copy()
-    s2_df = quality_df[quality_df["split"] == split2][
-        ["subject_id", "session_id", column]
-    ].copy()
-
-    # Rename columns for merge
-    s1_df = s1_df.rename(columns={column: "val1"})
-    s2_df = s2_df.rename(columns={column: "val2"})
-
-    # Merge on subject_id AND session_id to handle subjects with multiple sessions
-    result = s1_df.merge(s2_df, on=["subject_id", "session_id"], how="inner")
-
-    # Create a display label (subject_id only, for cleaner plot labels)
-    result["label"] = result["subject_id"].astype(str)
-
-    # Compute difference
-    if relative:
-        mean_val = (result["val1"] + result["val2"]) / 2
-        result["diff"] = abs(result["val1"] - result["val2"]) / mean_val * 100
-    else:
-        result["diff"] = abs(result["val1"] - result["val2"])
-
-    return result
-
-
 def get_column_by_split(quality_df, column, split):
     """
     Get a column's values for all subjects at a specific split.

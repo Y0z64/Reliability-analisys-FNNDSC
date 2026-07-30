@@ -14,6 +14,10 @@ import subprocess
 
 subjects_base_path = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
 
+# Sibling script in this directory - resolved from __file__ so the batch runner
+# works from any CWD and always drives the checked-out extractor.
+EXTRACT_SP_SURFACE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract_SP_surface.py")
+
 def process_split(split_data):
     """Process a single split - to be run in parallel"""
     subject_id, session_id, split, args = split_data
@@ -45,7 +49,7 @@ def process_split(split_data):
     # Run extraction pipeline, redirect all output to error log
     cmd = [
         "python3",
-        "/neuro/labs/grantlab/research/MRI_processing/yair.beltran/Reliability/extract_SP_surface.py",
+        EXTRACT_SP_SURFACE,
         "--subject_id",
         subject_id,
         "--session_id",

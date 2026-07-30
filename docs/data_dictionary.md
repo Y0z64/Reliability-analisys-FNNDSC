@@ -4,24 +4,29 @@ All CSVs are **long format**: one row per subject×split, or per subject×split-
 Join keys are always `subject_id` + `session_id` (subjects can have several sessions).
 
 Splits are `S1 S2 S3 S4`; the two comparison pairs are `S1-S2` and `S3-S4`.
-Tissue labels: subplate `4, 5`; cortical plate `1, 42`; inner zone `160, 161`.
+
+### Tissue labels: 
+- subplate `4, 5`
+- cortical plate `1, 42`
+- inner zone `160, 161`.
 
 ---
 
-## `data/subject.csv` — 21 rows
+## `data/subject.csv`
 
-Hand-curated. Master roster; the `--subjects` argument for every processing script.
+Main subject file. the `--subjects` argument for every processing script.
 
 `subject_id`, `session_id`, `GA` (gestational age, weeks)
 
-## `data/raw_subject_data.csv` — 21 rows
+## `data/raw_subject_data.csv`
 
-Hand-curated. QA scores are manual image assessments; there is no script for them.
+QA scores are obtained from segmentation pipeline. [Consult the spreadsheet](https://bostonchildrenshospital-my.sharepoint.com/:x:/r/personal/yair_beltran_childrens_harvard_edu/Documents/Attachments/Copy%20of%20reliability%20test_SJ.xlsx?d=wf840aa38f7b94b429c20465c5581eb14&csf=1&web=1&e=NR61XF)
+
 
 `subject_id`, `session_id`, `stack_count` (imaging stacks, 3–11), `stacks_paired`,
 `GA`, `QA_S1`…`QA_S4`, `QA12_mean` (mean QA over S1,S2), `QA34_mean`
 
-## `data/image_quality_metrics.csv` — 91 rows (subject × split)
+## `data/image_quality_metrics.csv` - (subject × split)
 
 Produced by **`src/image_quality_metrics.py`**, then enriched by two other steps.
 
@@ -36,16 +41,16 @@ Produced by **`src/image_quality_metrics.py`**, then enriched by two other steps
 | `sp_iz_cnr` | **`src/functions/CNR.py`** (`uv run python -m src.functions.CNR`) — boundary contrast ratio between the SP and IZ bands |
 | `wm_surface_area` | **`src/surface_analysis/surface_analisys.ipynb`** — merged from `surface_audit.total_wm_area`. The notebook rewrites this CSV in place. |
 
-## `data/cross_split_metrics.csv` — 413 rows (subject × model × split pair)
+## `data/cross_split_metrics.csv` -(subject × model × split pair)
 
 Produced by **`src/reliability/Reliability.ipynb`** (batched via `batch_process.py`).
 
 `subject_id`, `session_id`, `model` (segmentation model compared), `labels` (tissue
 label set), `split1`, `split2`, `dice`, `jaccard`, `relative_diff`
 
-## `data/surface_audit.csv` — 362 rows (subject × split)
+## `data/surface_audit.csv` - (subject × split)
 
-Produced by **`src/processing/surface_audit.py --batch`**. Requires cluster access.
+Produced by **`src/processing/surface_audit.py --batch`**.
 
 | Columns | Meaning |
 |---|---|
@@ -61,7 +66,7 @@ Produced by **`src/processing/surface_audit.py --batch`**. Requires cluster acce
 Note: `total_wm_area` referenced by `surface_analisys.ipynb` is derived in-notebook
 from `lh_area_sum + rh_area_sum`.
 
-## `data/thickness_audit.csv` — 80 rows (subject × split)
+## `data/thickness_audit.csv` - (subject × split)
 
 Produced by **`src/processing/thickness_audit.py`**. Subjects filtered to `GA <= 32`.
 
@@ -88,7 +93,7 @@ These six were originally added by hand outside any script. `add_pair_columns()`
 was written to reproduce the committed values and does so to float precision
 (max deviation 2e-14).
 
-## `data/split_comparision_data.csv` — 46 rows (subject × split pair)
+## `data/split_comparision_data.csv` - (subject × split pair)
 
 The main modelling table. Assembled by three separate producers.
 
@@ -96,7 +101,7 @@ The main modelling table. Assembled by three separate producers.
 |---|---|
 | `subject_id`, `session_id`, `GA`, `split_pair`, `abs_diff_{sp,cp,inner,total}`, `rel_diff_{sp,cp,inner,total}` | `compute_independent_pair_diffs()` in `src/image_quality_metrics.py`, wired up behind `--pair_diffs`. Absolute and percent differences of `native_vol_*` between the pair's two splits; `total` = sp + cp + inner. |
 | `cnr_diff`, `cnr_mean` | `src/functions/CNR.py` `__main__` — abs difference and mean of `sp_iz_cnr` across the pair |
-| `wm_surface_area_diff`, `wm_surface_area_mean` | **No script.** Added ad hoc. Verified derivation from `image_quality_metrics.wm_surface_area`: `diff = |a - b|`, `mean = (a + b) / 2` over the pair's two splits (reproduces the committed values to 4e-12). |
+| `wm_surface_area_diff`, `wm_surface_area_mean` | Derivated from `image_quality_metrics.wm_surface_area`: `diff = \|a - b\|`, `mean = (a + b) / 2` over the pair's two splits. |
 
 > `--pair_diffs` drops and re-merges only the columns it owns, so rerunning it
 > preserves `cnr_*` and `wm_surface_area_*`. Verified: the regenerated volume
@@ -104,7 +109,7 @@ The main modelling table. Assembled by three separate producers.
 
 ---
 
-## Result tables — `assets/`
+## Result tables - `assets/`
 
 Written by the stage-4 notebooks; these are the numbers reported in the paper.
 See `docs/pipeline.md` for which notebook writes which file.

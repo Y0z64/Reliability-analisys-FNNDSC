@@ -6,7 +6,7 @@ Traps and non-obvious facts. Read before changing anything.
 
 - **`src/paper_models.ipynb` is the current analysis.** Everything in
   `src/multivariate_analysis/`, `src/cnr_analisys/` and `src/summary_analisys/`
-  is an earlier generation, kept for reference. `src/slides_helpers.py` superseded
+  is obsolete, kept for reference. `src/slides_helpers.py` superseded
   `src/multivariate_analysis/_functions.py`.
 - `archive/` holds files that are dead — see `archive/README.md` for why each one.
 
@@ -22,11 +22,9 @@ from the directory it lives in.** Three different `sys.path` hacks are in play:
 | `src/surface_analysis/thickness_analysis.ipynb` | `sys.path.insert(0, '..')` for `slides_helpers` |
 | `src/paper_models*.ipynb`, `bootstrap_covariates.ipynb` | no hack — rely on CWD being `src/` |
 
-Consequences: the directory names `cnr_analisys/` and `summary_analisys/` are
-misspelled but **cannot be renamed** without breaking the second hack. And
+Consequences: the directory names `cnr_analisys/` and `summary_analisys/` **cannot be renamed** without breaking the second hack. And
 `src/functions/CNR.py` uses a relative import, so it must be run as
-`uv run python -m src.functions.CNR` from the repo root — its data paths are
-`__file__`-anchored to make that work from anywhere.
+`uv run python -m src.functions.CNR` from the repo root.
 
 ## CSVs that get rewritten in place
 
@@ -42,32 +40,15 @@ you will lose columns:
 
 ## Data you cannot regenerate
 
-`data/subject.csv` and `data/raw_subject_data.csv` are hand-entered (the QA
-scores are manual image assessments). They are tracked in git for exactly this
-reason. Do not add them to `.gitignore`.
+`data/subject.csv` and `data/raw_subject_data.csv` are obtained obtained from the reliability project test cohort. [This spreadsheet](https://bostonchildrenshospital-my.sharepoint.com/:x:/r/personal/yair_beltran_childrens_harvard_edu/Documents/Attachments/Copy%20of%20reliability%20test_SJ.xlsx?d=wf840aa38f7b94b429c20465c5581eb14&csf=1&web=1&e=NR61XF)
+ contains most fo the information on both files. If you dont have access, request the original spreadsheet from [Andrea Gondova](mailto:Andrea.Gondova@childrens.harvard.edu).
 
 `wm_surface_area_diff` / `wm_surface_area_mean` in `split_comparision_data.csv`
-have no producing script — the derivation is documented and verified in
-`docs/data_dictionary.md`, but nothing regenerates them automatically.
+are produced by calculating the gaussian distance between the vertex points of the WM surface area and the inner SP surface area. Both files can be found on each subject, more [bellow](#subject-directory-layout).
 
-## Cluster coupling
+## Lab network access
 
-- Stages 1–3 need `/neuro/...` access; stage 4 (all the paper notebooks) runs
-  from a clone. See `docs/environment.md` for the full path inventory.
-- `src/processing/extract_SP_surface.py` is **not** the file that runs. Its caller
-  `run_SP_batch.py` invokes a copy at
-  `/neuro/labs/grantlab/research/MRI_processing/yair.beltran/Reliability/extract_SP_surface.py`.
-  Edits must be copied over.
-- `run_SP_prediction.py` needs its own conda env and does not run on el-jobo.
+- Stages 1–3 need `/neuro/...` access; See `docs/environment.md` for the full path inventory.
+- `run_SP_prediction.py` needs its own conda env and does not run on el-jobo. Consult [Andrea Gondova](mailto:Andrea.Gondova@childrens.harvard.edu).
 
-## Known rough edges
-
-- `src/image_quality_metrics.py` writes long-format CSVs but `add_derived_metrics()`
-  also builds a wide format that nothing currently consumes.
-- `src/surface_analysis/thickness_analysis.ipynb` has its cell set **duplicated** —
-  the whole analysis appears twice. Any edit must be made in both copies.
-- `src/surface_analysis/surface_analisys_summary.ipynb` re-defines a local copy of
-  `_compute_split_pair_diff` instead of importing it from
-  `src/summary_analisys/_functions.py`.
-- Repo-wide `ruff check` reports ~80 pre-existing style errors, almost all in
-  notebooks. The processing and metrics scripts are clean.
+## Subject directory layout
