@@ -49,12 +49,13 @@ reports/       per-subject PDFs (generated, gitignored)
 
 | | |
 |---|---|
+| [`docs/quick_reference.md`](docs/quick_reference.md) | summary of all docs |
 | [`docs/project_overview.md`](docs/project_overview.md) | study design, sample, what is measured |
 | [`docs/pipeline.md`](docs/pipeline.md) | every stage, the exact command, what it writes |
 | [`docs/data_dictionary.md`](docs/data_dictionary.md) | every CSV column and its producer |
 | [`docs/environment.md`](docs/environment.md) | envs and the hardcoded `/neuro/...` paths |
-| [`docs/handoff_notes.md`](docs/handoff_notes.md) | **read first** — traps, CWD rules, in-place rewrites |
+| [`docs/handoff_notes.md`](docs/handoff_notes.md) | **read first**; pitfalls, CWD rules, in-place rewrites |
 
 ## Contacts
 
-Yair Beltran, Andrea Gondova, Seungyoon Jeong.
+Yair Beltran (yairprogrammer@gmail.com), Andrea Gondova (Andrea.Gondova@childrens.harvard.edu), Seungyoon Jeong.
