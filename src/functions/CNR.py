@@ -1,10 +1,28 @@
+"""Boundary contrast ratio (CNR) between subplate and inner zone.
+
+Run the batch as a module from anywhere -- paths below are anchored to this
+file, not to the working directory:
+
+    uv run python -m src.functions.CNR
+
+Writes: data/image_quality_metrics.csv (sp_iz_cnr column)
+        data/split_comparision_data.csv (cnr_diff, cnr_mean columns)
+        assets/artifacts/cnr_batch_tests/<subject>.png (S1 band overlays)
+Requires FNNDSC cluster access to BASE_PATH.
+"""
+
 import nibabel as nib
 import numpy as np
 import pandas as pd
-from scipy.ndimage import binary_dilation, generate_binary_structure, binary_erosion
+from scipy.ndimage import binary_dilation, generate_binary_structure
 import os
 import matplotlib.pyplot as plt
 from .helpers import get_middle_slice, normalize_intensity
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DATA_DIR = os.path.join(_REPO_ROOT, "data")
+ARTIFACTS_DIR = os.path.join(_REPO_ROOT, "assets", "artifacts")
+BASE_PATH = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
 
 TISSUE_LABELS = {
     "sp": [4, 5],
@@ -153,7 +171,7 @@ def batch_cnr(subjects_df, base_path, splits=None):
                 print(f"  Error {subj}/{split}: {e}")
 
             if split == "S1":
-                savepath = "cnr_batch_tests"
+                savepath = os.path.join(ARTIFACTS_DIR, "cnr_batch_tests")
                 os.makedirs(savepath, exist_ok=True)
                 fig = plot_cr_bands(t2_data=t2, cr_result=r)
                 fig.savefig(os.path.join(savepath, f"{subj}.png"))
@@ -164,15 +182,15 @@ def batch_cnr(subjects_df, base_path, splits=None):
     return pd.DataFrame(records)
 
 if __name__ == "__main__":
-    base_path = "/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/"
-    subjects_df = pd.read_csv("../../data/subject.csv")
-    quality_df = pd.read_csv("../../data/image_quality_metrics.csv")
-    split_pair_diffs = pd.read_csv("../../data/split_comparision_data.csv")
+    base_path = BASE_PATH
+    subjects_df = pd.read_csv(os.path.join(DATA_DIR, "subject.csv"))
+    quality_df = pd.read_csv(os.path.join(DATA_DIR, "image_quality_metrics.csv"))
+    split_pair_diffs = pd.read_csv(os.path.join(DATA_DIR, "split_comparision_data.csv"))
 
     # Compute CNR data
     cnr_data = batch_cnr(subjects_df, base_path)
 
-    quality_df = quality_df.drop(columns=["sp_iz_cnr"])        
+    quality_df = quality_df.drop(columns=["sp_iz_cnr"], errors="ignore")
 
     # Merge CNR data into quality_df on subject_id, session_id, and split
     quality_df = quality_df.merge(
@@ -185,12 +203,12 @@ if __name__ == "__main__":
     quality_df.rename(columns={"cr": "sp_iz_cnr"}, inplace=True)
 
     # Save the updated dataframe
-    quality_df.to_csv("../../data/image_quality_metrics.csv", index=False)
+    quality_df.to_csv(os.path.join(DATA_DIR, "image_quality_metrics.csv"), index=False)
 
     print("\n")
     print("Successfully added sp_iz_cnr column to image_quality_metrics.csv")
     print(f"\nUpdated dataframe shape: {quality_df.shape}")
-    print(f"\nFirst few rows of sp_iz_cnr:")
+    print("\nFirst few rows of sp_iz_cnr:")
     print(quality_df[["subject_id", "session_id", "split", "sp_iz_cnr"]].head(10))
 
     # === Compute CNR diff and mean for split pairs (S1-S2, S3-S4) ===
@@ -251,9 +269,11 @@ if __name__ == "__main__":
     )
     
     # Save the updated split comparison dataframe
-    split_pair_diffs.to_csv("../../data/split_comparision_data.csv", index=False)
+    split_pair_diffs.to_csv(
+        os.path.join(DATA_DIR, "split_comparision_data.csv"), index=False
+    )
     
     print("Successfully added cnr_diff and cnr_mean columns to split_comparision_data.csv")
     print(f"\nUpdated split comparison dataframe shape: {split_pair_diffs.shape}")
-    print(f"\nFirst few rows with CNR columns:")
+    print("\nFirst few rows with CNR columns:")
     print(split_pair_diffs[["subject_id", "session_id", "split_pair", "cnr_diff", "cnr_mean"]].head(10))

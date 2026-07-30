@@ -7,7 +7,15 @@ For each subject/session/split, checks whether SP pipeline produced both
 Euclidean distance (the innersp mesh is deformed from the WM mesh, so vertex i
 in one corresponds to vertex i in the other) and aggregates to mean thickness.
 
+Then appends the split-pair columns the paper notebooks model on -- split_pair,
+thk_diff, thk_mean, apd_thk -- plus qa_mean and stack_count joined from
+data/raw_subject_data.csv. Those six columns used to be added by hand outside
+this script; `add_pair_columns` below reproduces the committed values exactly.
+
 Outputs: data/thickness_audit.csv
+Requires FNNDSC cluster access to BASE_PATH.
+
+Run:  uv run python src/processing/thickness_audit.py
 """
 
 import os
@@ -22,6 +30,7 @@ SPLITS = ["S1", "S2", "S3", "S4"]
 HEMIS = ["lh", "rh"]
 GA_MAX = 32.0  # exclude subjects with GA > 32 weeks
 SUBJECT_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "data", "subject.csv")
+RAW_SUBJECT_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw_subject_data.csv")
 OUT_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "data", "thickness_audit.csv")
 
 
@@ -144,6 +153,59 @@ def audit_split(subject_id: str, session_id: str, split: str) -> dict[str, Any]:
     return record
 
 
+def add_pair_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach the split-pair thickness columns consumed by the paper notebooks.
+
+    For each pair (S1-S2, S3-S4) computed from `wholebrain_thk_mean`:
+        thk_diff = |a - b|
+        thk_mean = (a + b) / 2
+        apd_thk  = thk_diff / thk_mean * 100      (absolute percent difference)
+
+    The pair-level values are written onto *both* split rows of the pair, which
+    is the shape paper_models*.ipynb expects. qa_mean and stack_count are joined
+    from raw_subject_data.csv (QA12_mean for S1-S2, QA34_mean for S3-S4).
+    """
+    pairs = {"S1": "S1-S2", "S2": "S1-S2", "S3": "S3-S4", "S4": "S3-S4"}
+    df = df.copy()
+    df["split_pair"] = df["split"].map(pairs)
+
+    records = []
+    for (subj, sess, pair), g in df.groupby(["subject_id", "session_id", "split_pair"]):
+        vals = g["wholebrain_thk_mean"].dropna()
+        if len(vals) != 2:
+            continue
+        a, b = vals.iloc[0], vals.iloc[1]
+        mean = (a + b) / 2
+        records.append({
+            "subject_id": subj, "session_id": sess, "split_pair": pair,
+            "thk_diff": abs(a - b),
+            "thk_mean": mean,
+            "apd_thk": abs(a - b) / mean * 100 if mean else np.nan,
+        })
+
+    if records:
+        df = df.merge(pd.DataFrame(records),
+                      on=["subject_id", "session_id", "split_pair"], how="left")
+    else:
+        for col in ("thk_diff", "thk_mean", "apd_thk"):
+            df[col] = np.nan
+
+    if os.path.isfile(RAW_SUBJECT_CSV):
+        raw = pd.read_csv(RAW_SUBJECT_CSV).astype({"subject_id": str})
+        qa_map = {"S1-S2": "QA12_mean", "S3-S4": "QA34_mean"}
+        cols = ["subject_id"] + [c for c in ("QA12_mean", "QA34_mean", "stack_count")
+                                 if c in raw.columns]
+        df = df.merge(raw[cols], on="subject_id", how="left")
+        df["qa_mean"] = df.apply(
+            lambda r: r.get(qa_map.get(r["split_pair"], ""), np.nan), axis=1
+        )
+        df = df.drop(columns=[c for c in ("QA12_mean", "QA34_mean") if c in df.columns])
+    else:
+        print(f"WARNING: {RAW_SUBJECT_CSV} missing; qa_mean/stack_count not added")
+
+    return df
+
+
 def main():
     subjects = pd.read_csv(SUBJECT_CSV)
     n_before = len(subjects)
@@ -165,6 +227,7 @@ def main():
         "has_thickness",
     ]
     df_out = df.drop(columns=[c for c in drop_cols if c in df.columns])
+    df_out = add_pair_columns(df_out)
     df_out.to_csv(OUT_CSV, index=False)
 
     n_total = len(df)

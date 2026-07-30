@@ -1,73 +1,67 @@
 # CLAUDE.md
+
 ## Project Overview
 
-Neuroimaging reliability analysis project for fetal brain segmentation at FNNDSC with the intention of writting a paper. Measures reproducibility of segmentation results across multiple processing splits (S1–S4) per subject using metrics like Dice coefficient, Hausdorff distance, Jaccard index, SNR, and CNR. The measurements are done in a specific model created to segment the subplate with the intention of recreating an older paper that measured reliability in older models without this feature.
+Neuroimaging reliability analysis for fetal brain subplate segmentation at FNNDSC,
+written up as a paper. Measures reproducibility across four reconstruction splits
+(S1–S4) per subject using Dice, Jaccard, Hausdorff, SNR and CNR. Replicates an
+older lab study that measured reliability of the cortical plate model, which lacked
+the subplate feature.
 
-# Context
-Refer to the files at `/home/yair/Documents/MCP/MCP/Projects/Reliability/context` for context, explanation of the project and individual submodules and a consult and save a summary of the last work done.
+**Start with `docs/`** — `docs/handoff_notes.md` lists the traps,
+`docs/pipeline.md` the exact commands, `docs/data_dictionary.md` what every CSV
+column is and which script wrote it.
 
 ## Commands
 
-### Package Management (uv)
-
 ```bash
-uv sync              # Install/sync dependencies from uv.lock
-uv add <package>     # Add a new dependency
-uv run <script>      # Run a script in the project environment
+uv sync                      # install deps from uv.lock
+uv run ruff check .          # lint    (~80 pre-existing errors, mostly in notebooks)
+uv run ruff format .         # format
+uv run ty check              # type check
+uv run jupyter lab           # notebooks
 ```
 
-### Linting and Type Checking
+Analysis (no cluster needed — `data/*.csv` is tracked):
 
 ```bash
-uv run ruff check .          # Lint
-uv run ruff format .         # Format
-uv run ty check              # Type check
+cd src && uv run jupyter lab      # paper_models.ipynb, then bootstrap_covariates.ipynb
 ```
 
-### Running Analysis Scripts
-
-```bash
-# Batch reliability analysis (requires Reliability.ipynb in src/reliability/)
-cd src/reliability && uv run python batch_process.py
-
-# Surface extraction batch (multiprocessing)
-uv run python src/processing/run_SP_batch.py --subjects data/subject.csv
-
-# Image quality metrics
-uv run python src/image_quality_metrics.py --subjects data/subject.csv --base_path /neuro/labs/grantlab/research/MRI_processing/
-```
-
-### Jupyter Notebooks
-
-```bash
-uv run jupyter lab   # Start JupyterLab
-```
+Data generation (needs FNNDSC cluster access) — see `docs/pipeline.md`.
 
 ## Architecture
 
-### Data Model
+### Data model
 
-All analysis data is in **long format** (one row per subject-split combination). Derived metrics are computed at analysis time. Core CSVs in `data/`:
-- `raw_subject_data.csv` — per-subject volume and quality metrics
-- `split_comparision_data.csv` — pairwise reliability metrics across splits
-- `cross_split_metrics.csv` — aggregated cross-split comparisons
-- `image_quality_metrics.csv` — SNR/CNR per subject
+Long format: one row per subject-split or subject-split-pair. Join on
+`subject_id` + `session_id`. Derived metrics computed at analysis time.
+Core CSVs in `data/` — `subject.csv` and `raw_subject_data.csv` are hand-curated
+and irreplaceable; the rest are script-derived. Full column-by-column provenance
+is in `docs/data_dictionary.md`.
 
-### Module Structure
+### Module structure
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/functions/` | Shared utilities: `helpers.py` (image ops, segmentation metrics), `CNR.py` (contrast-to-noise ratio computation) |
-| `src/reliability/` | Core reliability analysis: `Reliability.py` (Dice/Jaccard/Hausdorff across splits), `batch_process.py` (papermill executor) |
-| `src/processing/` | Pipeline: surface extraction, prediction batch jobs, multiprocessing workers |
-| `src/multivariate_analysis/` | Multivariate regression framework; `_functions.py` prepares model inputs |
-| `src/cnr_analisys/` | CNR-focused multivariate analysis; generates plots and summary tables |
-| `src/summary_analisys/` | Summary statistics helpers for cross-split comparisons |
+| `src/` | Current analysis: `paper_models*.ipynb`, `bootstrap_covariates.ipynb`, `slides_helpers.py` (regression + result tables), `image_quality_metrics.py` (SNR/CNR/volume CLI) |
+| `src/functions/` | `helpers.py` (image ops, segmentation metrics), `CNR.py` (boundary contrast ratio) |
+| `src/reliability/` | Per-subject Dice/Jaccard reports: `Reliability.ipynb` + `batch_process.py` (papermill) |
+| `src/processing/` | Cluster-side: SP prediction, surface extraction, surface/thickness audits |
+| `src/surface_analysis/` | Surface and thickness notebooks |
+| `src/multivariate_analysis/`, `src/cnr_analisys/`, `src/summary_analisys/` | Legacy, superseded by `paper_models.ipynb` |
+| `assets/` | Result tables + reference-paper PDFs; `assets/artifacts/` holds generated figures |
+| `archive/` | Dead code, kept for traceability |
 
-### Key Conventions
+### Key conventions
 
-- **Tissue labels**: Subplate (SP) = 4, 5; Cortical Plate (CP) = 1, 42; Inner zones = 160, 161
-- **Splits**: S1, S2, S3, S4 — different processing runs of the same subject used to measure reproducibility
-- **Notebook-driven**: Primary workflow is Jupyter notebooks; batch execution uses [papermill](https://papermill.readthedocs.io/)
-- **Base data path**: `/neuro/labs/grantlab/research/MRI_processing/` — FNNDSC lab infrastructure, not portable
-- **FreeSurfer LUT**: `assets/FreeSurferColorLUT.txt` used for brain region color mapping
+- **Tissue labels**: Subplate (SP) = 4, 5; Cortical Plate (CP) = 1, 42; Inner zone = 160, 161
+- **Splits**: S1–S4; only the non-overlapping pairs S1-S2 and S3-S4 are modelled
+- **Working directory matters** — notebooks and scripts use relative paths and
+  CWD-based imports. Run each from the directory it lives in. `src/functions/CNR.py`
+  is the exception: `uv run python -m src.functions.CNR` from the repo root.
+- Do not rename `cnr_analisys/` or `summary_analisys/` — a `sys.path.insert`
+  in `cnr_analysis.ipynb` depends on the spelling
+- **Base data path**: `/neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/` — not portable
+- **FreeSurfer LUT**: `reference/FreeSurferColorLUT.txt` (code reads the cluster copy)
+- Several scripts and notebooks **rewrite CSVs in place** — see `docs/handoff_notes.md`

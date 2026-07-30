@@ -29,8 +29,7 @@ import numpy as np
 import os
 import glob
 import argparse
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 nib = None  # populated below if nibabel is available
 try:
@@ -235,7 +234,7 @@ def _parse_error_log_snippet(error_log_path: str, n_chars: int = 500) -> str:
             fsize = f.tell()
             f.seek(max(0, fsize - n_chars))
             return f.read().strip()
-    except:
+    except OSError:
         return ""
 
 
@@ -631,7 +630,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--batch", action="store_true", help="Run batch audit")
     parser.add_argument(
-        "--subjects", type=str, default="../data/subject.csv", help="Path to subjects CSV"
+        "--subjects", type=str, default="../../data/subject.csv", help="Path to subjects CSV"
     )
     parser.add_argument(
         "--base-path", type=str, default=BASE_PATH, help="Base directory"
@@ -648,7 +647,7 @@ if __name__ == "__main__":
         help="Skip SP surface area computation from .innersp.gii meshes",
     )
     parser.add_argument(
-        "--output", type=str, default="surface_audit.csv", help="Output CSV path"
+        "--output", type=str, default="../../data/surface_audit.csv", help="Output CSV path"
     )
 
     args = parser.parse_args()

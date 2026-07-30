@@ -3,28 +3,34 @@
 Image Quality Metrics for Fetal Brain Segmentation Reliability Analysis
 ========================================================================
 
-Consolidated module combining functionality from:
-- image_quality_metrics.py (core SNR/CNR computation)
-- image_qam_v2.py (multi-split processing)
-- regenerate_iqm.py (batch runner)
+Consolidated module combining the former image_quality_metrics.py (core SNR/CNR
+computation), image_qam_v2.py (multi-split processing) and regenerate_iqm.py
+(batch runner). Requires FNNDSC cluster access to --base_path.
 
 Data Format: Long format (one row per subject-split combination)
 - This follows tidy data principles and works well with pandas operations
 - Derived metrics (split differences, means across splits) computed at analysis time
 
-Usage:
-------
-    # Batch process all subjects
-    python image_quality_metrics_consolidated.py --subjects subject.csv --base_path /path/to/data
-    
+Usage (run from src/):
+----------------------
+    # Per-split SNR/CNR/volumes -> data/image_quality_metrics.csv
+    uv run python image_quality_metrics.py \
+        --subjects ../data/subject.csv \
+        --base_path /neuro/labs/grantlab/research/MRI_processing/seungyoon.jeong/2025/Reliability/TEST/
+
+    # Also rebuild the volume pair-diff columns of data/split_comparision_data.csv
+    # (split_pair, abs_diff_*, rel_diff_*) from the metrics CSV
+    uv run python image_quality_metrics.py ... --pair_diffs
+
     # Or import as module
-    from image_quality_metrics_consolidated import (
+    from image_quality_metrics import (
         compute_subject_split_metrics,
         batch_compute_metrics,
         add_derived_metrics,
+        compute_independent_pair_diffs,
     )
 
-Author: Daniel (consolidated from multiple files)
+See docs/data_dictionary.md for which column comes from where.
 """
 
 import nibabel as nib
@@ -706,6 +712,39 @@ def compute_independent_pair_diffs(quality_df):
     return pd.DataFrame(records)
 
 
+def update_pair_diffs_csv(quality_df: pd.DataFrame, csv_path: str) -> pd.DataFrame:
+    """Refresh the volume pair-diff columns of split_comparision_data.csv in place.
+
+    Recomputes split_pair / abs_diff_* / rel_diff_* from `quality_df` and merges
+    them back on (subject_id, session_id, split_pair), leaving every other column
+    of the target CSV untouched. Columns owned by other producers -- cnr_diff and
+    cnr_mean come from src/functions/CNR.py -- are preserved.
+
+    Creates the CSV if it does not exist yet.
+    """
+    diffs = compute_independent_pair_diffs(quality_df)
+    if diffs.empty:
+        print(f"\nNo complete split pairs found; leaving {csv_path} untouched.")
+        return diffs
+
+    keys = ["subject_id", "session_id", "split_pair"]
+
+    if os.path.exists(csv_path):
+        existing = pd.read_csv(csv_path)
+        owned = [c for c in diffs.columns if c not in keys]
+        existing = existing.drop(columns=owned, errors="ignore")
+        for key in keys:
+            existing[key] = existing[key].astype(str)
+            diffs[key] = diffs[key].astype(str)
+        merged = existing.merge(diffs, on=keys, how="outer")
+    else:
+        merged = diffs
+
+    merged.to_csv(csv_path, index=False)
+    print(f"\nWrote volume pair diffs for {len(diffs)} split pairs to {csv_path}")
+    return merged
+
+
 # =============================================================================
 # SUMMARY/REPORTING
 # =============================================================================
@@ -782,7 +821,16 @@ def main():
         "--splits", nargs="+", default=SPLITS,
         help="Splits to process (default: S1 S2 S3 S4)"
     )
-    
+    parser.add_argument(
+        "--pair_diffs", action="store_true",
+        help="Also refresh the volume pair-diff columns (split_pair, abs_diff_*, "
+             "rel_diff_*) in --pair_diffs_output from the computed metrics"
+    )
+    parser.add_argument(
+        "--pair_diffs_output", default="../data/split_comparision_data.csv",
+        help="Target CSV for --pair_diffs (default: data/split_comparision_data.csv)"
+    )
+
     args = parser.parse_args()
     
     # Load subjects
@@ -805,7 +853,10 @@ def main():
     
     # Print summary
     print_summary(df)
-    
+
+    if args.pair_diffs:
+        update_pair_diffs_csv(df, args.pair_diffs_output)
+
     print("\nDone!")
 
 

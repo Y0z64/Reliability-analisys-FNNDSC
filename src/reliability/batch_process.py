@@ -10,8 +10,8 @@ from pathlib import Path
 
 # Configuration
 NOTEBOOK_PATH = "Reliability.ipynb"
-CSV_PATH = "../data/subject.csv"
-OUTPUT_DIR = Path("outputs")
+CSV_PATH = "../../data/subject.csv"
+OUTPUT_DIR = Path("../../reports")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Read subjects
@@ -38,7 +38,7 @@ for idx, row in subjects_df.iterrows():
             parameters={
                 'subject_id': subject_id,
                 'session_id': session_id,
-                'pdf_output_path': f"../reports/{subject_id}_{session_id}_reliability_report.pdf" #Overwrite pdf path with new parameters
+                'pdf_output_path': f"../../reports/{subject_id}_{session_id}_reliability_report.pdf" #Overwrite pdf path with new parameters
             },
             kernel_name='python3'
         )
